@@ -196,6 +196,14 @@ class RetrievalService:
                             w=float(bb_data.get("w", 0)),
                             h=float(bb_data.get("h", 0)),
                         )
+                    elif isinstance(bb_data, list) and len(bb_data) >= 4:
+                        x1, y1, x2, y2 = bb_data[:4]
+                        bbox = BoundingBox(
+                            x=float(x1),
+                            y=float(y1),
+                            w=float(max(0, x2 - x1)),
+                            h=float(max(0, y2 - y1)),
+                        )
                 except Exception:
                     pass
 

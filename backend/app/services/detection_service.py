@@ -77,7 +77,7 @@ class DetectionService:
 
             # Extract crop and detect dominant color
             crop = frame[y1:y2, x1:x2]
-            color = classify_dominant_color(crop)
+            color, color_conf = classify_dominant_color(crop)
 
             # Extract track ID if available
             track_id = None
@@ -87,13 +87,19 @@ class DetectionService:
                 except Exception:
                     pass
 
-            description = f"{color} {class_name} detected" if color else f"{class_name} detected"
+            # Only include color in description if color is known and reliable
+            if color and color != "unknown":
+                description = f"{color} {class_name} detected"
+            else:
+                color = None
+                description = f"{class_name} detected"
 
             detections.append({
                 "object_type": class_name,
                 "confidence": round(conf, 4),
                 "bbox": [x1, y1, x2, y2],
                 "color": color,
+                "color_confidence": color_conf,
                 "object_id": track_id,
                 "description": description,
             })

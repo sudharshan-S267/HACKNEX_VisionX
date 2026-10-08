@@ -99,8 +99,8 @@ class VideoService:
                     detections = detection_service.detect_frame(frame, conf_threshold=0.35, persist_track=True)
 
                     # 8: Record events
-                    for det in detections:
-                        evt_code = f"evt_{video.camera_id}_{int(timestamp*10):04d}"
+                    for det_idx, det in enumerate(detections):
+                        evt_code = f"evt_{video.camera_id}_{int(timestamp*10):04d}_{det_idx+1}"
                         cam_name = settings.CAMERAS.get(video.camera_id, {}).get("camera_name", f"Camera {video.camera_id}")
                         event = Event(
                             event_id=evt_code,

@@ -211,6 +211,10 @@ class QueryService:
         """
         # Grounding Rule: If no matches, NEVER call LLM.
         if not matches:
+            if parsed.color and parsed.object_type:
+                return f"No matching {parsed.color} {parsed.object_type}s were detected in the indexed footage."
+            elif parsed.object_type:
+                return f"No matching {parsed.object_type}s were detected in the indexed footage."
             return "No matching event was found in the indexed footage."
 
         # Attempt Ollama if available

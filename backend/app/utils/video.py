@@ -26,19 +26,22 @@ def get_video_metadata(video_path: Path) -> Tuple[float, float, int, int, int]:
     return float(fps), float(duration), total_frames, width, height
 
 
-def classify_dominant_color(bgr_crop: np.ndarray) -> str:
+def classify_dominant_color(bgr_crop: np.ndarray, min_confidence_threshold: float = 0.35) -> Tuple[str, float]:
     """
     Classify dominant color of an object crop using OpenCV in HSV color space.
-    Supported classes: red, blue, white, black, green, yellow, gray.
+    Returns: (color_name, color_confidence)
+    
+    Supported classes: red, blue, white, black, green, yellow, gray, unknown.
+    Never forces a guess: if confidence is below min_confidence_threshold, returns ("unknown", confidence).
     """
     if bgr_crop is None or bgr_crop.size == 0:
-        return "gray"
+        return "unknown", 0.0
 
     h, w = bgr_crop.shape[:2]
     if h == 0 or w == 0:
-        return "gray"
+        return "unknown", 0.0
 
-    # Crop the central 60% of the bounding box to avoid background/asphalt bias
+    # Crop the central 60% of the bounding box to eliminate road, asphalt, or background bias
     if h >= 10 and w >= 10:
         y1 = int(h * 0.2)
         y2 = int(h * 0.8)
@@ -50,7 +53,7 @@ def classify_dominant_color(bgr_crop: np.ndarray) -> str:
     else:
         sample = bgr_crop
 
-    # Resize to standard 64x64 for fast and uniform histogram evaluation
+    # Resize to standard 64x64 for uniform histogram evaluation
     resized = cv2.resize(sample, (64, 64), interpolation=cv2.INTER_AREA)
     hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
 
@@ -88,15 +91,21 @@ def classify_dominant_color(bgr_crop: np.ndarray) -> str:
     total_pixels = 64 * 64
     total_chromatic = sum(chromatic_counts.values())
 
-    # If at least 15% of pixels are chromatic, pick the dominant chromatic color
+    # If at least 15% of pixels are chromatic, consider chromatic colors first
     if total_chromatic >= (total_pixels * 0.15):
         dominant_chromatic = max(chromatic_counts, key=chromatic_counts.get)
-        if chromatic_counts[dominant_chromatic] > 0:
-            return dominant_chromatic
+        count = chromatic_counts[dominant_chromatic]
+        confidence = round(float(count / total_pixels), 2)
+        if confidence >= min_confidence_threshold:
+            return dominant_chromatic, confidence
+        return "unknown", confidence
 
-    # Otherwise, choose among achromatic colors
+    # Otherwise, consider achromatic colors
     dominant_achromatic = max(achromatic_counts, key=achromatic_counts.get)
-    if achromatic_counts[dominant_achromatic] > 0:
-        return dominant_achromatic
+    count = achromatic_counts[dominant_achromatic]
+    confidence = round(float(count / total_pixels), 2)
 
-    return "gray"
+    if confidence >= min_confidence_threshold:
+        return dominant_achromatic, confidence
+
+    return "unknown", confidence
