@@ -3,12 +3,26 @@ import { Eye, Sparkles, AlertCircle } from 'lucide-react';
 import VideoPlayer from './VideoPlayer';
 import type { Camera } from '../types';
 
-const DEMO_VIDEOS: Record<string, string> = {
+const DEMO_VIDEOS_BY_ID: Record<string, string> = {
   'CAM-01': '/demo/cam01-preview.mp4',
   'CAM-02': '/demo/cam02-preview.mp4',
   'CAM-03': '/demo/cam03-preview.mp4',
   'CAM-04': '/demo/cam04-preview.mp4',
 };
+
+function resolveDemoVideo(camera: Camera): string {
+  if (DEMO_VIDEOS_BY_ID[camera.camera_id]) {
+    return DEMO_VIDEOS_BY_ID[camera.camera_id];
+  }
+
+  const label = `${camera.camera_name} ${camera.location || ''}`.toLowerCase();
+  if (label.includes('parking')) return '/demo/cam02-preview.mp4';
+  if (label.includes('entrance') || label.includes('lobby') || label.includes('building')) {
+    return '/demo/cam03-preview.mp4';
+  }
+  if (label.includes('exit')) return '/demo/cam04-preview.mp4';
+  return '/demo/cam01-preview.mp4';
+}
 
 interface CameraCardProps {
   camera: Camera;
@@ -27,11 +41,10 @@ export default function CameraCard({
 }: CameraCardProps) {
   const [hover, setHover] = useState(false);
   const [previewFailed, setPreviewFailed] = useState(false);
-  const isOnline = camera.status === 'online';
 
-  // Priority: 1. Real uploaded video, 2. Built-in CCTV preview, 3. Empty fallback
+  // Priority: 1. Real uploaded video, 2. Location CCTV loop, 3. Empty fallback
   const hasRealVideo = Boolean(camera.video_url);
-  const demoPreviewSrc = DEMO_VIDEOS[camera.camera_id] || '/demo/cam01-preview.mp4';
+  const demoPreviewSrc = resolveDemoVideo(camera);
   const effectiveVideoSrc = hasRealVideo
     ? camera.video_url
     : previewFailed
@@ -39,6 +52,7 @@ export default function CameraCard({
     : demoPreviewSrc;
 
   const isPreviewMode = !hasRealVideo && Boolean(effectiveVideoSrc);
+  const isLiveFeed = camera.status === 'online' || isPreviewMode;
 
   return (
     <div
@@ -100,17 +114,17 @@ export default function CameraCard({
             {/* Live/Offline status indicator */}
             <div
               className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold mono tracking-wider border ${
-                isOnline
+                isLiveFeed
                   ? 'bg-emerald-950/80 text-emerald-400 border-emerald-500/40'
                   : 'bg-rose-950/80 text-rose-400 border-rose-500/40'
               }`}
             >
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  isOnline ? 'bg-emerald-400 pulse-dot' : 'bg-rose-500'
+                  isLiveFeed ? 'bg-emerald-400 pulse-dot' : 'bg-rose-500'
                 }`}
               />
-              {isOnline ? 'LIVE' : 'OFFLINE'}
+              {isLiveFeed ? 'LIVE' : 'OFFLINE'}
             </div>
           </div>
         </div>

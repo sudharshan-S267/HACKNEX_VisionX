@@ -1,3 +1,4 @@
+# Node
 node_modules
 dist
 dist-ssr
@@ -9,3 +10,29 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Large models & video storage
+backend/data/videos/*.mp4
+backend/data/videos/*.avi
+backend/data/videos/*.mov
+backend/data/evidence/*.mp4
+!backend/data/videos/.gitkeep
+!backend/data/evidence/.gitkeep
+*.pt
+*.onnx
+
+# Database
+*.db
+*.sqlite3
+!*.gitkeep

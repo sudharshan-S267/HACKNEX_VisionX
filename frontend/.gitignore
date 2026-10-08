@@ -1,4 +1,5 @@
 node_modules
+.tmp-demo
 dist
 dist-ssr
 *.local

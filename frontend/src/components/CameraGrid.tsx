@@ -13,10 +13,10 @@ interface CameraGridProps {
 
 // Placeholder cameras shown before backend responds
 const PLACEHOLDER_CAMERAS: Camera[] = [
-  { camera_id: 'CAM-01', camera_name: 'Main Gate', location: 'North Entrance', status: 'offline', event_count: 0 },
-  { camera_id: 'CAM-02', camera_name: 'Parking Area', location: 'West Wing', status: 'offline', event_count: 0 },
-  { camera_id: 'CAM-03', camera_name: 'Building Entrance', location: 'Lobby', status: 'offline', event_count: 0 },
-  { camera_id: 'CAM-04', camera_name: 'Exit Gate', location: 'South Exit', status: 'offline', event_count: 0 },
+  { camera_id: 'CAM-01', camera_name: 'Main Gate', location: 'North Entrance', status: 'online', event_count: 0 },
+  { camera_id: 'CAM-02', camera_name: 'Parking Area', location: 'West Wing', status: 'online', event_count: 0 },
+  { camera_id: 'CAM-03', camera_name: 'Building Entrance', location: 'Lobby', status: 'online', event_count: 0 },
+  { camera_id: 'CAM-04', camera_name: 'Exit Gate', location: 'South Exit', status: 'online', event_count: 0 },
 ];
 
 export default function CameraGrid({

@@ -23,10 +23,10 @@ const HEALTH_POLL_INTERVAL = 10_000;
 
 // Default 4 fallback CCTV channels
 const PLACEHOLDER_CAMERAS: Camera[] = [
-  { camera_id: 'CAM-01', camera_name: 'Main Gate', location: 'North Perimeter', status: 'offline', event_count: 0 },
-  { camera_id: 'CAM-02', camera_name: 'Parking Area', location: 'Zone B Parking', status: 'offline', event_count: 0 },
-  { camera_id: 'CAM-03', camera_name: 'Building Entrance', location: 'Lobby Portal', status: 'offline', event_count: 0 },
-  { camera_id: 'CAM-04', camera_name: 'Exit Gate', location: 'South Perimeter', status: 'offline', event_count: 0 },
+  { camera_id: 'CAM-01', camera_name: 'Main Gate', location: 'North Perimeter', status: 'online', event_count: 0 },
+  { camera_id: 'CAM-02', camera_name: 'Parking Area', location: 'Zone B Parking', status: 'online', event_count: 0 },
+  { camera_id: 'CAM-03', camera_name: 'Building Entrance', location: 'Lobby Portal', status: 'online', event_count: 0 },
+  { camera_id: 'CAM-04', camera_name: 'Exit Gate', location: 'South Perimeter', status: 'online', event_count: 0 },
 ];
 
 export default function Dashboard() {

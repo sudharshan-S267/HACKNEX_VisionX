@@ -42,11 +42,14 @@ export default function VideoPlayer({
     }
   }, [seekTo]);
 
-  // Auto-play
+  // Auto-play without waiting on React state for preview loops
   useEffect(() => {
-    if (autoPlay && src && videoRef.current) {
-      videoRef.current.play().catch(() => {});
-      setPlaying(true);
+    const video = videoRef.current;
+    if (!autoPlay || !src || !video) return;
+    video.muted = true;
+    const playPromise = video.play();
+    if (playPromise) {
+      playPromise.then(() => setPlaying(true)).catch(() => {});
     }
   }, [autoPlay, src]);
 
@@ -76,9 +79,10 @@ export default function VideoPlayer({
   const handleTimeUpdate = useCallback(() => {
     const v = videoRef.current;
     if (!v) return;
-    setCurrentTime(v.currentTime);
     onTimeUpdate?.(v.currentTime);
-  }, [onTimeUpdate]);
+    if (!showControls) return;
+    setCurrentTime(v.currentTime);
+  }, [onTimeUpdate, showControls]);
 
   const handleScrub = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const v = videoRef.current;
@@ -101,10 +105,18 @@ export default function VideoPlayer({
             src={src}
             muted={muted}
             loop={loop}
+            autoPlay={autoPlay}
             playsInline
-            className="w-full h-full object-cover"
-            onTimeUpdate={handleTimeUpdate}
-            onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
+            preload="auto"
+            disablePictureInPicture
+            disableRemotePlayback
+            className="w-full h-full object-cover [transform:translateZ(0)]"
+            onTimeUpdate={showControls || onTimeUpdate ? handleTimeUpdate : undefined}
+            onLoadedMetadata={() => {
+              if (showControls) {
+                setDuration(videoRef.current?.duration || 0);
+              }
+            }}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onError={onError}
