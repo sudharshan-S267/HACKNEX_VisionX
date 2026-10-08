@@ -67,9 +67,9 @@ export default function QueryBar({ onSubmit, loading, disabled }: QueryBarProps)
             placeholder="Ask anything about the cameras…"
             className="
               query-input w-full
-              bg-surface-3 border border-subtle rounded-lg
+              bg-slate-100 border border-slate-300 rounded-lg
               pl-9 pr-4 py-3
-              text-sm text-white placeholder-slate-600
+              text-sm text-black placeholder-slate-500
               font-medium
               disabled:opacity-40 disabled:cursor-not-allowed
               transition-all duration-200

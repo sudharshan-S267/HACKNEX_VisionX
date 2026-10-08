@@ -101,8 +101,8 @@ export default function AIInvestigator({
               disabled={disabled || loading}
               placeholder="Ask anything about your cameras..."
               className="
-                query-input w-full bg-command-950/80 border border-white/[0.1] rounded-lg
-                px-3 py-2.5 text-xs text-white placeholder-slate-500 font-medium
+                query-input w-full bg-slate-100 border border-slate-300 rounded-lg
+                px-3 py-2.5 text-xs text-black placeholder-slate-500 font-medium
                 disabled:opacity-40 disabled:cursor-not-allowed
               "
             />
