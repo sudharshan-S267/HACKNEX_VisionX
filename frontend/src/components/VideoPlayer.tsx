@@ -8,8 +8,11 @@ interface VideoPlayerProps {
   cameraName?: string;
   autoPlay?: boolean;
   muted?: boolean;
+  loop?: boolean;
+  showControls?: boolean;
   className?: string;
   onTimeUpdate?: (time: number) => void;
+  onError?: () => void;
 }
 
 export default function VideoPlayer({
@@ -18,8 +21,11 @@ export default function VideoPlayer({
   cameraName,
   autoPlay = false,
   muted: initialMuted = true,
+  loop = false,
+  showControls = true,
   className = '',
   onTimeUpdate,
+  onError,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -94,16 +100,19 @@ export default function VideoPlayer({
             ref={videoRef}
             src={src}
             muted={muted}
+            loop={loop}
             playsInline
             className="w-full h-full object-cover"
             onTimeUpdate={handleTimeUpdate}
             onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
+            onError={onError}
           />
 
           {/* Overlay controls */}
-          <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 hover:opacity-100 transition-opacity duration-200">
+          {showControls && (
+            <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 hover:opacity-100 transition-opacity duration-200">
             {/* Scrubber */}
             <div className="px-3 pb-1">
               <input
@@ -153,6 +162,7 @@ export default function VideoPlayer({
               </div>
             </div>
           </div>
+          )}
         </>
       ) : (
         // No source placeholder

@@ -3,6 +3,13 @@ import { Eye, Sparkles, AlertCircle } from 'lucide-react';
 import VideoPlayer from './VideoPlayer';
 import type { Camera } from '../types';
 
+const DEMO_VIDEOS: Record<string, string> = {
+  'CAM-01': '/demo/cam01-preview.mp4',
+  'CAM-02': '/demo/cam02-preview.mp4',
+  'CAM-03': '/demo/cam03-preview.mp4',
+  'CAM-04': '/demo/cam04-preview.mp4',
+};
+
 interface CameraCardProps {
   camera: Camera;
   isSelected?: boolean;
@@ -19,7 +26,19 @@ export default function CameraCard({
   onOpen,
 }: CameraCardProps) {
   const [hover, setHover] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const isOnline = camera.status === 'online';
+
+  // Priority: 1. Real uploaded video, 2. Built-in CCTV preview, 3. Empty fallback
+  const hasRealVideo = Boolean(camera.video_url);
+  const demoPreviewSrc = DEMO_VIDEOS[camera.camera_id] || '/demo/cam01-preview.mp4';
+  const effectiveVideoSrc = hasRealVideo
+    ? camera.video_url
+    : previewFailed
+    ? undefined
+    : demoPreviewSrc;
+
+  const isPreviewMode = !hasRealVideo && Boolean(effectiveVideoSrc);
 
   return (
     <div
@@ -44,11 +63,19 @@ export default function CameraCard({
       {/* VIDEO PREVIEW CONTAINER */}
       <div className="relative aspect-video bg-black scan-line">
         <VideoPlayer
-          src={camera.video_url}
-          seekTo={seekTo}
+          src={effectiveVideoSrc}
+          seekTo={hasRealVideo ? seekTo : undefined}
           cameraName={camera.camera_name}
+          autoPlay={true}
+          loop={isPreviewMode}
+          muted={true}
+          showControls={hasRealVideo}
+          onError={() => {
+            if (isPreviewMode) {
+              setPreviewFailed(true);
+            }
+          }}
           className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${hover ? 'brightness-110' : 'brightness-95'}`}
-          muted
         />
 
         {/* TOP BAR: CAM ID, NAME & LIVE BADGE */}
