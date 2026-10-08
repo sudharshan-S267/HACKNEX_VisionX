@@ -2,6 +2,18 @@ import { useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, Volume2, VolumeX, Maximize2 } from 'lucide-react';
 import { useState } from 'react';
 
+export interface HighlightBox {
+  x?: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  norm_x?: number;
+  norm_y?: number;
+  norm_w?: number;
+  norm_h?: number;
+  label?: string;
+}
+
 interface VideoPlayerProps {
   src?: string;
   seekTo?: number;
@@ -11,6 +23,7 @@ interface VideoPlayerProps {
   loop?: boolean;
   showControls?: boolean;
   className?: string;
+  highlightBox?: HighlightBox;
   onTimeUpdate?: (time: number) => void;
   onError?: () => void;
 }
@@ -24,6 +37,7 @@ export default function VideoPlayer({
   loop = false,
   showControls = true,
   className = '',
+  highlightBox,
   onTimeUpdate,
   onError,
 }: VideoPlayerProps) {
@@ -121,6 +135,35 @@ export default function VideoPlayer({
             onPause={() => setPlaying(false)}
             onError={onError}
           />
+
+          {/* Target Bounding Box Overlay (Single Requested Object Only) */}
+          {highlightBox && highlightBox.norm_w && highlightBox.norm_h && (
+            <div
+              className="absolute pointer-events-none transition-all duration-150 z-20"
+              style={{
+                left: `${Math.max(0, Math.min(100, (highlightBox.norm_x ?? 0) * 100))}%`,
+                top: `${Math.max(0, Math.min(100, (highlightBox.norm_y ?? 0) * 100))}%`,
+                width: `${Math.max(2, Math.min(100, (highlightBox.norm_w ?? 0) * 100))}%`,
+                height: `${Math.max(2, Math.min(100, (highlightBox.norm_h ?? 0) * 100))}%`,
+              }}
+            >
+              <div className="w-full h-full border-2 border-cyan-400 bg-cyan-400/10 rounded-sm relative shadow-[0_0_15px_rgba(6,182,212,0.45)]">
+                {/* Corner bracket accents */}
+                <div className="absolute -top-1 -left-1 w-2.5 h-2.5 border-t-2 border-l-2 border-cyan-300" />
+                <div className="absolute -top-1 -right-1 w-2.5 h-2.5 border-t-2 border-r-2 border-cyan-300" />
+                <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 border-b-2 border-l-2 border-cyan-300" />
+                <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 border-b-2 border-r-2 border-cyan-300" />
+
+                {/* Target badge */}
+                {highlightBox.label && (
+                  <div className="absolute -top-6 left-0 flex items-center gap-1.5 bg-black/90 border border-cyan-400/80 px-2 py-0.5 rounded text-[10px] font-mono font-bold text-cyan-300 whitespace-nowrap shadow-lg">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                    {highlightBox.label}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Overlay controls */}
           {showControls && (

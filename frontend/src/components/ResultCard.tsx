@@ -46,15 +46,20 @@ export default function ResultCard({
         </>
       )}
 
-      {/* Top row: Camera ID, Name & Timestamp */}
+      {/* Top row: Camera ID, Name, Target Badge & Timestamp */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <span className="mono text-[10px] font-extrabold text-cyan-300 bg-cyan-900/40 border border-cyan-500/30 px-1.5 py-0.5 rounded">
             {match.camera_id}
           </span>
-          <span className="text-xs font-bold text-white truncate max-w-[130px]">
+          <span className="text-xs font-bold text-white truncate max-w-[110px]">
             {match.camera_name}
           </span>
+          {match.object_type && (
+            <span className="mono text-[9px] font-bold text-amber-300 bg-amber-950/70 border border-amber-500/40 px-1.5 py-0.5 rounded uppercase tracking-wider">
+              {match.color ? `${match.color} ` : ''}{match.object_type}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1 text-slate-300 mono text-xs font-semibold bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/[0.05]">

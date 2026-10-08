@@ -1,32 +1,58 @@
 import json
 import logging
-from typing import List, Optional, Tuple
+import os
+from pathlib import Path
+from typing import List, Optional, Tuple, Dict
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 
 from app.models.event import Event, Camera
+from app.models.video import Video
 from app.schemas.query import ParsedQuery, Match, TimeRange, BoundingBox
 from app.core.config import settings
+from app.core.ontology import (
+    OBJECT_ONTOLOGY,
+    CATEGORY_ONTOLOGY,
+    ALL_SUPPORTED_CLASSES,
+    SYNONYM_TO_CANONICAL,
+    normalize_entity_token,
+)
 
 logger = logging.getLogger("visiontrace.retrieval")
 
-# Synonyms mapping
-OBJECT_SYNONYMS = {
-    "car": ["car", "vehicle", "automobile", "sedan", "suv"],
-    "person": ["person", "man", "woman", "pedestrian", "someone", "individual"],
-    "truck": ["truck", "pickup", "lorry"],
-    "bus": ["bus"],
-    "motorcycle": ["motorcycle", "motorbike", "bike", "scooter"],
-}
+# Synonyms mapping for backward compatibility
+OBJECT_SYNONYMS = {k: v["synonyms"] for k, v in OBJECT_ONTOLOGY.items()}
+OBJECT_SYNONYMS["vehicle"] = CATEGORY_ONTOLOGY["vehicle"]
+OBJECT_SYNONYMS["bag"] = CATEGORY_ONTOLOGY["bag"]
+
+_video_dims_cache: Dict[str, Tuple[int, int]] = {}
+
+
+def get_video_dimensions(video_path: Path) -> Tuple[int, int]:
+    key = str(video_path)
+    if key in _video_dims_cache:
+        return _video_dims_cache[key]
+    try:
+        import cv2
+        cap = cv2.VideoCapture(key)
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        if w > 0 and h > 0:
+            _video_dims_cache[key] = (w, h)
+            return (w, h)
+    except Exception:
+        pass
+    _video_dims_cache[key] = (1920, 1080)
+    return (1920, 1080)
+
 
 def normalize_object(obj: Optional[str]) -> Optional[str]:
     if not obj:
         return None
-    obj_lower = obj.lower().strip()
-    for canonical, syns in OBJECT_SYNONYMS.items():
-        if obj_lower in syns:
-            return canonical
-    return obj_lower
+    tok = obj.lower().strip()
+    return SYNONYM_TO_CANONICAL.get(tok, tok)
+
 
 class RetrievalService:
     @staticmethod
@@ -63,13 +89,22 @@ class RetrievalService:
     ) -> List[Match]:
         """
         Search and rank SQLite events based on deterministic parsed query.
-        Ranking Criteria:
-        1. Exact object match
-        2. Exact color match
-        3. Location match
-        4. Confidence
-        5. Timestamp relevance (earliest for first_seen, latest for last_seen)
+        
+        CRITICAL RULES:
+        1. DATABASE-LEVEL STRICT OBJECT FILTER:
+           If query is 'Find cars', SQL query MUST filter object_type = 'car' (and canonical synonyms).
+           NEVER retrieve people, trucks, buses, etc.
+        2. DATABASE-LEVEL STRICT COLOR FILTER:
+           If query is 'Find red cars', SQL query MUST filter color = 'red' AND object_type = 'car'.
+           NEVER retrieve other colors.
+        3. If no matches exist in DB, returns empty list [].
+        4. NEVER use broad fallback search when entity is unknown or unsupported.
         """
+        # Grounding Rule: Unsupported or Clarification queries must NEVER query SQLite
+        if parsed.status in ["unsupported_object", "clarification_required"]:
+            logger.info(f"[RETRIEVAL SKIPPED] Query status is '{parsed.status}'. Returning 0 matches.")
+            return []
+
         # If query explicitly specifies non-existent event
         import re
         if re.search(r"\b(?:that\s+does\s+not\s+exist|not\s+exist|non[- ]?existent)\b", (parsed.raw_query or "").lower()):
@@ -77,23 +112,50 @@ class RetrievalService:
 
         query = db.query(Event)
 
-        # Apply hard constraints if provided in API request
+        # ── 1. Strict Database-Level Object Filter ───────────────────────────
+        allowed_classes: List[str] = []
+        if parsed.status == "all_objects":
+            allowed_classes = list(ALL_SUPPORTED_CLASSES)
+            query = query.filter(Event.object_type.in_(allowed_classes))
+        elif parsed.object_types:
+            allowed_classes = list(parsed.object_types)
+            query = query.filter(Event.object_type.in_(allowed_classes))
+        elif parsed.object_type:
+            norm = normalize_object(parsed.object_type)
+            if norm:
+                allowed_classes = [norm]
+                query = query.filter(Event.object_type.in_(allowed_classes))
+            else:
+                logger.info(f"[RETRIEVAL BLOCKED] Object '{parsed.object_type}' unrecognized. Refusing fallback search.")
+                return []
+        else:
+            # Under NO circumstance should an unparsed query search everything
+            logger.info("[RETRIEVAL BLOCKED] No object_types specified. Refusing fallback search.")
+            return []
+
+        # ── 2. Strict Database-Level Color Filter ────────────────────────────
+        if parsed.color:
+            req_color = parsed.color.lower().strip()
+            # Enforce SQL WHERE clause: color = req_color
+            query = query.filter(Event.color.ilike(req_color))
+
+        # ── 3. Database-Level Camera Constraints ─────────────────────────────
         if camera_ids:
             query = query.filter(Event.camera_id.in_(camera_ids))
+        if parsed.camera_id:
+            query = query.filter(Event.camera_id.ilike(parsed.camera_id))
+
+        # ── 4. Database-Level Time Constraints ───────────────────────────────
         if time_range:
             query = query.filter(
                 Event.timestamp >= time_range.start,
                 Event.timestamp <= time_range.end,
             )
 
-        if parsed.camera_id:
-            query = query.filter(Event.camera_id.ilike(parsed.camera_id))
-
         events = query.all()
         if not events:
             return []
 
-        norm_parsed_obj = normalize_object(parsed.object_type)
         scored_events: List[Tuple[float, Event]] = []
 
         for event in events:
@@ -104,37 +166,18 @@ class RetrievalService:
             ev_cam_loc = self.get_camera_location(event.camera_id, db).lower()
             ev_cam_name = (event.camera_name or self.get_camera_name(event.camera_id, db)).lower()
 
-            score = 0.0
+            # Strict object double-check (fail-safe)
+            if allowed_classes and (ev_obj not in allowed_classes and event.object_type not in allowed_classes):
+                continue
 
-            # 1. Object match
-            if norm_parsed_obj:
-                synonyms = OBJECT_SYNONYMS.get(norm_parsed_obj, [norm_parsed_obj])
-                obj_matched = False
-                if ev_obj and ev_obj in synonyms:
-                    score += 100.0
-                    obj_matched = True
-                elif any(syn in ev_desc for syn in synonyms):
-                    score += 50.0
-                    obj_matched = True
-
-                # If an explicit object type was requested but this event is for a different object, skip it
-                if not obj_matched:
-                    continue
-
-            # 2. Color match
+            # Strict color double-check (fail-safe)
             if parsed.color:
-                parsed_color = parsed.color.lower()
-                if ev_color == parsed_color:
-                    score += 80.0
-                elif parsed_color in ev_desc:
-                    score += 45.0
-                elif ev_color and ev_color != parsed_color:
-                    # Mismatched color (e.g. blue vehicle when user asked for red car) -> skip
+                if ev_color != parsed.color.lower().strip():
                     continue
-                else:
-                    score -= 10.0
 
-            # 3. Location match (strict filter if user explicitly asked for a specific location)
+            score = 100.0  # Base score for passing database-level filter
+
+            # Location match bonus/filter
             if parsed.location:
                 req_loc = parsed.location.lower()
                 loc_matched = (
@@ -144,22 +187,21 @@ class RetrievalService:
                     or req_loc in ev_desc
                 )
                 if not loc_matched:
-                    # Explicit location was requested (e.g. 'at the main gate'), skip non-matching locations
                     continue
                 score += 60.0
 
-            # 4. Action match (e.g., enter, exit, parked)
+            # Action match bonus
             if parsed.action:
                 act = parsed.action.lower()
                 ev_action = (event.action or "").lower()
                 if act in ev_action or act in ev_desc:
                     score += 35.0
 
-            # 5. Camera ID match
+            # Camera ID match bonus
             if parsed.camera_id and event.camera_id.upper() == parsed.camera_id.upper():
                 score += 50.0
 
-            # 6. Confidence factor
+            # Confidence factor
             conf = float(event.confidence) if event.confidence is not None else 0.5
             score += conf * 10.0
 
@@ -170,13 +212,10 @@ class RetrievalService:
 
         # Sort according to operation / ranking requirements
         if parsed.operation == "first_seen":
-            # For 'first seen', sort by timestamp ASC, top is earliest match
             scored_events.sort(key=lambda item: (item[1].timestamp, -item[0]))
         elif parsed.operation == "last_seen":
-            # For 'last seen', sort by timestamp DESC, top is latest match
             scored_events.sort(key=lambda item: (-item[1].timestamp, -item[0]))
         else:
-            # Normal search: rank by score DESC, confidence DESC, timestamp ASC
             scored_events.sort(key=lambda item: (-item[0], -(item[1].confidence or 0.0), item[1].timestamp))
 
         # Take top results
@@ -184,25 +223,54 @@ class RetrievalService:
 
         matches: List[Match] = []
         for _, ev in top_candidates:
-            # Parse bounding box if available
+            # Resolve video dimensions for normalized bounding box calculation
+            video_rec = db.query(Video).filter(Video.id == ev.video_id).first() if ev.video_id else None
+            if not video_rec:
+                video_rec = db.query(Video).filter(Video.camera_id == ev.camera_id).order_by(Video.id.desc()).first()
+
+            vid_w, vid_h = (1920, 1080)
+            if video_rec and video_rec.filename:
+                vp = Path(video_rec.filename)
+                if not vp.is_absolute():
+                    vp = (settings.VIDEO_DIR / vp.name).resolve()
+                if vp.exists():
+                    vid_w, vid_h = get_video_dimensions(vp)
+
+            # Parse bounding box
             bbox = None
             if ev.bounding_box:
                 try:
                     bb_data = json.loads(ev.bounding_box)
                     if isinstance(bb_data, dict):
+                        bx = float(bb_data.get("x", 0))
+                        by = float(bb_data.get("y", 0))
+                        bw = float(bb_data.get("w", 0))
+                        bh = float(bb_data.get("h", 0))
                         bbox = BoundingBox(
-                            x=float(bb_data.get("x", 0)),
-                            y=float(bb_data.get("y", 0)),
-                            w=float(bb_data.get("w", 0)),
-                            h=float(bb_data.get("h", 0)),
+                            x=bx,
+                            y=by,
+                            w=bw,
+                            h=bh,
+                            norm_x=round(bx / vid_w, 4) if vid_w > 0 else None,
+                            norm_y=round(by / vid_h, 4) if vid_h > 0 else None,
+                            norm_w=round(bw / vid_w, 4) if vid_w > 0 else None,
+                            norm_h=round(bh / vid_h, 4) if vid_h > 0 else None,
                         )
                     elif isinstance(bb_data, list) and len(bb_data) >= 4:
                         x1, y1, x2, y2 = bb_data[:4]
+                        bx = float(x1)
+                        by = float(y1)
+                        bw = float(max(0, x2 - x1))
+                        bh = float(max(0, y2 - y1))
                         bbox = BoundingBox(
-                            x=float(x1),
-                            y=float(y1),
-                            w=float(max(0, x2 - x1)),
-                            h=float(max(0, y2 - y1)),
+                            x=bx,
+                            y=by,
+                            w=bw,
+                            h=bh,
+                            norm_x=round(bx / vid_w, 4) if vid_w > 0 else None,
+                            norm_y=round(by / vid_h, 4) if vid_h > 0 else None,
+                            norm_w=round(bw / vid_w, 4) if vid_w > 0 else None,
+                            norm_h=round(bh / vid_h, 4) if vid_h > 0 else None,
                         )
                 except Exception:
                     pass
@@ -210,21 +278,36 @@ class RetrievalService:
             cam_name = ev.camera_name or self.get_camera_name(ev.camera_id, db)
             desc = ev.description or f"{ev.color or ''} {ev.object_type or 'object'} detected".strip()
             evidence_url = f"/api/v1/evidence/{ev.id}"
+            thumbnail_url = f"/api/v1/evidence/{ev.id}/frame"
 
             matches.append(
                 Match(
+                    id=ev.id,
                     camera_id=ev.camera_id,
                     camera_name=cam_name,
                     timestamp=round(float(ev.timestamp), 2),
                     confidence=round(float(ev.confidence or 1.0), 2),
-                    event_type=ev.event_type or "object_detected",
+                    event_type=ev.event_type or f"{ev.object_type or 'object'}_detected",
+                    object_type=ev.object_type,
+                    color=ev.color,
                     description=desc,
                     evidence_url=evidence_url,
-                    thumbnail_url=ev.thumbnail_url,
+                    thumbnail_url=thumbnail_url,
                     bounding_box=bbox,
                 )
             )
 
-        return matches
+        # Final Safety Verification: Block any match not strictly conforming to allowed classes
+        safe_matches: List[Match] = []
+        for m in matches:
+            m_obj = normalize_object(m.object_type)
+            if not allowed_classes or m_obj in allowed_classes or m.object_type in allowed_classes:
+                safe_matches.append(m)
+            else:
+                logger.warning(f"[SAFETY FILTER BLOCKED] Event id={m.id} object={m.object_type} not in allowed={allowed_classes}")
+
+        return safe_matches
+
+
 
 retrieval_service = RetrievalService()

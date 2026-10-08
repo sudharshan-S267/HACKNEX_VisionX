@@ -70,30 +70,34 @@ class TrajectoryService:
         - MVP terminology: 'consistent visual match' (no unwarranted claim of true re-identification)
         """
         norm_obj = normalize_object(object_type)
-        synonyms = OBJECT_SYNONYMS.get(norm_obj, [norm_obj]) if norm_obj else []
+        if norm_obj == "vehicle":
+            allowed_classes = ["car", "bus", "truck", "motorcycle", "vehicle", "automobile"]
+            synonyms = allowed_classes
+        else:
+            synonyms = OBJECT_SYNONYMS.get(norm_obj, [norm_obj]) if norm_obj else []
+            allowed_classes = list(set([s.lower() for s in synonyms] + [norm_obj.lower()])) if norm_obj else []
 
-        # 1. Fetch all candidate events
+        # 1. Fetch candidate events with strict database-level filtering
         query = db.query(Event)
+        if norm_obj:
+            query = query.filter(Event.object_type.in_(allowed_classes))
+        if color:
+            query = query.filter(Event.color.ilike(color.lower().strip()))
+
         events = query.order_by(Event.timestamp.asc()).all()
 
         matching_events: List[Event] = []
         for ev in events:
             ev_obj = normalize_object(ev.object_type)
-            ev_desc = (ev.description or "").lower()
             ev_color = (ev.color or "").lower() if ev.color else ""
 
             # Check object type
-            if norm_obj:
-                obj_match = (ev_obj in synonyms) or any(s in ev_desc for s in synonyms)
-                if not obj_match:
-                    continue
+            if norm_obj and ev_obj not in synonyms:
+                continue
 
             # Check color
-            if color:
-                req_color = color.lower().strip()
-                color_match = (ev_color == req_color) or (req_color in ev_desc)
-                if not color_match:
-                    continue
+            if color and ev_color != color.lower().strip():
+                continue
 
             matching_events.append(ev)
 

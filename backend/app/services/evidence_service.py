@@ -37,7 +37,8 @@ class EvidenceService:
         video_path: Path,
         timestamp: float,
         duration: float,
-        event_id: int
+        event_id: int,
+        force: bool = False,
     ) -> str:
         """
         Generate evidence clip from (timestamp - 3) to (timestamp + 3) seconds.
@@ -51,9 +52,15 @@ class EvidenceService:
         output_filename = f"evt_{event_id:03d}.mp4"
         output_file = (self.evidence_dir / output_filename).resolve()
 
-        # If already generated and valid size, return path
-        if output_file.exists() and output_file.stat().st_size > 1024:
+        # If already generated and valid size, return path unless forced
+        if not force and output_file.exists() and output_file.stat().st_size > 1024:
             return str(output_file)
+
+        if output_file.exists():
+            try:
+                output_file.unlink()
+            except Exception:
+                pass
 
         # Attempt 1: FFmpeg (fast, produces web-compatible H.264 video)
         if self.ffmpeg_exe:

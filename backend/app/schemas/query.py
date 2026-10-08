@@ -10,6 +10,10 @@ class BoundingBox(BaseModel):
     y: float
     w: float
     h: float
+    norm_x: Optional[float] = None
+    norm_y: Optional[float] = None
+    norm_w: Optional[float] = None
+    norm_h: Optional[float] = None
 
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, description="Natural language search query")
@@ -17,11 +21,14 @@ class QueryRequest(BaseModel):
     time_range: Optional[TimeRange] = Field(default=None, description="Optional timestamp range filter")
 
 class Match(BaseModel):
+    id: Optional[int] = None
     camera_id: str
     camera_name: str
     timestamp: float
     confidence: float
     event_type: str
+    object_type: Optional[str] = None
+    color: Optional[str] = None
     description: str
     evidence_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
@@ -58,17 +65,28 @@ class TrajectoryResponse(BaseModel):
 class QueryResponse(BaseModel):
     query: str
     answer: str
+    status: str = "resolved"  # resolved | unsupported_object | clarification_required | all_objects
     matches: List[Match] = []
     trajectory: Optional[List[TrajectoryPoint]] = None
     processing_time_ms: Optional[float] = None
     total_frames_analyzed: Optional[int] = None
 
-class ParsedQuery(BaseModel):
+class QueryIntent(BaseModel):
     raw_query: str
     object_type: Optional[str] = None
+    object_types: List[str] = Field(default_factory=list)
     color: Optional[str] = None
     action: Optional[str] = None
     location: Optional[str] = None
     camera_id: Optional[str] = None
+    time_start: Optional[float] = None
+    time_end: Optional[float] = None
     time_filter: Optional[float] = None
+    attributes: List[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    status: str = "resolved"  # resolved | unsupported_object | clarification_required | all_objects
+    status_message: Optional[str] = None
     operation: str = "search"  # search | first_seen | last_seen | trajectory | evidence
+
+# Alias for backward compatibility
+ParsedQuery = QueryIntent

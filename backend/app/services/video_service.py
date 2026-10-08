@@ -367,6 +367,7 @@ class VideoService:
                     timestamp=peak_timestamp,
                     duration=duration,
                     event_id=event.id,
+                    force=True,
                 )
                 event.evidence_path = clip_path
                 created_events_count += 1

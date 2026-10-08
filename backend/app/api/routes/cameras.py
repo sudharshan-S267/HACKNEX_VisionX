@@ -2,6 +2,7 @@ import logging
 import os
 from pathlib import Path
 from typing import List, Optional
+import cv2
 
 from fastapi import (
     APIRouter,
@@ -275,8 +276,27 @@ def get_evidence_clip(event_id: int, db: Session = Depends(get_db)):
             detail=f"Event {event_id} not found."
         )
 
-    clip_file = None
+    # Resolve source video record
+    video_rec = None
+    if event.video_id:
+        video_rec = db.query(Video).filter(Video.id == event.video_id).first()
+    if not video_rec:
+        video_rec = (
+            db.query(Video)
+            .filter(Video.camera_id == event.camera_id)
+            .order_by(Video.id.desc())
+            .first()
+        )
 
+    video_path = None
+    if video_rec and video_rec.filename:
+        vp = Path(video_rec.filename)
+        if not vp.is_absolute():
+            vp = (settings.VIDEO_DIR / vp.name).resolve()
+        if vp.exists():
+            video_path = vp
+
+    clip_file = None
     # Check stored evidence path
     if event.evidence_path and os.path.exists(event.evidence_path):
         clip_file = event.evidence_path
@@ -286,34 +306,44 @@ def get_evidence_clip(event_id: int, db: Session = Depends(get_db)):
         if candidate.exists():
             clip_file = str(candidate)
 
-    if not clip_file or not os.path.exists(clip_file):
-        # On-the-fly generation from the original video
-        video_rec = None
-        if event.video_id:
-            video_rec = db.query(Video).filter(Video.id == event.video_id).first()
-        if not video_rec:
-            video_rec = (
-                db.query(Video)
-                .filter(Video.camera_id == event.camera_id)
-                .order_by(Video.id.desc())
-                .first()
-            )
+    # Validate that existing clip exists, has content, and matches source video dimensions
+    needs_regeneration = False
+    if not clip_file or not os.path.exists(clip_file) or os.path.getsize(clip_file) < 1024:
+        needs_regeneration = True
+    elif video_path:
+        try:
+            cap_c = cv2.VideoCapture(str(clip_file))
+            cw = int(cap_c.get(cv2.CAP_PROP_FRAME_WIDTH))
+            ch = int(cap_c.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap_c.release()
 
-        if video_rec and video_rec.filename:
-            vp = Path(video_rec.filename)
-            if not vp.is_absolute():
-                vp = (settings.VIDEO_DIR / vp.name).resolve()
-            if vp.exists():
-                duration = video_rec.duration or 0.0
-                clip_file = evidence_service.generate_clip(
-                    video_path=vp,
-                    timestamp=event.timestamp,
-                    duration=duration,
-                    event_id=event.id,
+            cap_v = cv2.VideoCapture(str(video_path))
+            vw = int(cap_v.get(cv2.CAP_PROP_FRAME_WIDTH))
+            vh = int(cap_v.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap_v.release()
+
+            if vw > 0 and vh > 0 and (cw != vw or ch != vh):
+                logger.warning(
+                    f"[EVIDENCE] Clip {clip_file} dimensions ({cw}x{ch}) do not match "
+                    f"source video ({vw}x{vh}). Regenerating from source video."
                 )
-                if clip_file:
-                    event.evidence_path = clip_file
-                    db.commit()
+                needs_regeneration = True
+        except Exception as e:
+            logger.warning(f"[EVIDENCE] Clip dimension check error: {e}")
+            needs_regeneration = True
+
+    if needs_regeneration and video_path:
+        duration = video_rec.duration if video_rec else 0.0
+        clip_file = evidence_service.generate_clip(
+            video_path=video_path,
+            timestamp=event.timestamp,
+            duration=duration,
+            event_id=event.id,
+            force=True,
+        )
+        if clip_file:
+            event.evidence_path = clip_file
+            db.commit()
 
     if not clip_file or not os.path.exists(clip_file):
         raise HTTPException(
@@ -322,6 +352,139 @@ def get_evidence_clip(event_id: int, db: Session = Depends(get_db)):
         )
 
     return FileResponse(clip_file, media_type="video/mp4")
+
+
+@router.get("/evidence/{event_id}/frame")
+def get_evidence_frame(event_id: int, db: Session = Depends(get_db)):
+    """
+    GET /api/v1/evidence/{event_id}/frame
+    Returns an annotated evidence snapshot frame extracted from the real CCTV video.
+    CRITICAL: Draws the bounding box reticle ONLY around the requested object event.
+    NEVER draws boxes around any people or other objects in the frame.
+    """
+    event = db.query(Event).filter(Event.id == event_id).first()
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Event {event_id} not found."
+        )
+
+    # Check cached frame
+    cached_frame_file = settings.EVIDENCE_DIR / f"evt_{event.id:03d}_frame.jpg"
+    if cached_frame_file.exists() and cached_frame_file.stat().st_size > 500:
+        return FileResponse(str(cached_frame_file), media_type="image/jpeg")
+
+    # Locate real video source
+    video_rec = None
+    if event.video_id:
+        video_rec = db.query(Video).filter(Video.id == event.video_id).first()
+    if not video_rec:
+        video_rec = (
+            db.query(Video)
+            .filter(Video.camera_id == event.camera_id)
+            .order_by(Video.id.desc())
+            .first()
+        )
+
+    if not video_rec or not video_rec.filename:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Source video for event {event_id} not available."
+        )
+
+    vp = Path(video_rec.filename)
+    if not vp.is_absolute():
+        vp = (settings.VIDEO_DIR / vp.name).resolve()
+    if not vp.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Source video file not found on disk: {vp}"
+        )
+
+    import cv2
+    import json
+    import numpy as np
+
+    cap = cv2.VideoCapture(str(vp))
+    if not cap.isOpened():
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Cannot open video for frame extraction."
+        )
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    frame_idx = max(0, int(event.timestamp * fps))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ret, frame = cap.read()
+    cap.release()
+
+    if not ret or frame is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read video frame at timestamp {event.timestamp}s."
+        )
+
+    # Draw bounding box ONLY around the requested target object
+    bbox = None
+    if event.bounding_box:
+        try:
+            bb_data = json.loads(event.bounding_box)
+            if isinstance(bb_data, list) and len(bb_data) >= 4:
+                bbox = [int(v) for v in bb_data[:4]]
+            elif isinstance(bb_data, dict):
+                bx = int(bb_data.get("x", 0))
+                by = int(bb_data.get("y", 0))
+                bw = int(bb_data.get("w", 0))
+                bh = int(bb_data.get("h", 0))
+                bbox = [bx, by, bx + bw, by + bh]
+        except Exception:
+            pass
+
+    annotated = frame.copy()
+    if bbox:
+        x1, y1, x2, y2 = bbox
+        h_frame, w_frame = annotated.shape[:2]
+        x1 = max(0, min(x1, w_frame - 1))
+        y1 = max(0, min(y1, h_frame - 1))
+        x2 = max(x1 + 1, min(x2, w_frame))
+        y2 = max(y1 + 1, min(y2, h_frame))
+
+        # Cyan target box (BGR: 255, 200, 0)
+        color_bgr = (255, 200, 0)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color_bgr, 2)
+
+        # Tactical corner brackets
+        corner_len = min(15, (x2 - x1) // 3, (y2 - y1) // 3)
+        if corner_len > 3:
+            cv2.line(annotated, (x1, y1), (x1 + corner_len, y1), (255, 255, 255), 3)
+            cv2.line(annotated, (x1, y1), (x1, y1 + corner_len), (255, 255, 255), 3)
+            cv2.line(annotated, (x2, y1), (x2 - corner_len, y1), (255, 255, 255), 3)
+            cv2.line(annotated, (x2, y1), (x2, y1 + corner_len), (255, 255, 255), 3)
+            cv2.line(annotated, (x1, y2), (x1 + corner_len, y2), (255, 255, 255), 3)
+            cv2.line(annotated, (x1, y2), (x1, y2 - corner_len), (255, 255, 255), 3)
+            cv2.line(annotated, (x2, y2), (x2 - corner_len, y2), (255, 255, 255), 3)
+            cv2.line(annotated, (x2, y2), (x2, y2 - corner_len), (255, 255, 255), 3)
+
+        # Label tag: TARGET ONLY (e.g. CAR 92% or RED CAR 92%)
+        obj_name = (event.object_type or "OBJECT").upper()
+        col_name = f"{event.color.upper()} " if event.color else ""
+        conf_pct = int((event.confidence or 1.0) * 100)
+        label = f"{col_name}{obj_name} {conf_pct}%"
+
+        (txt_w, txt_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+        badge_y1 = max(0, y1 - txt_h - 10)
+        badge_y2 = y1
+        badge_x2 = min(w_frame, x1 + txt_w + 10)
+        cv2.rectangle(annotated, (x1, badge_y1), (badge_x2, badge_y2), (20, 20, 20), -1)
+        cv2.rectangle(annotated, (x1, badge_y1), (badge_x2, badge_y2), color_bgr, 1)
+        cv2.putText(
+            annotated, label,
+            (x1 + 5, y1 - 5),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA
+        )
+
+    cv2.imwrite(str(cached_frame_file), annotated)
+    return FileResponse(str(cached_frame_file), media_type="image/jpeg")
 
 
 @router.get("/events", response_model=List[EventResponse])

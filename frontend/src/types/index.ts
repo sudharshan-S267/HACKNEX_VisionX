@@ -36,11 +36,14 @@ export interface QueryRequest {
 }
 
 export interface Match {
+  id?: number;
   camera_id: string;
   camera_name: string;
   timestamp: number;
   confidence: number;
   event_type: string;
+  object_type?: string;
+  color?: string;
   description: string;
   evidence_url?: string;
   thumbnail_url?: string;
@@ -49,6 +52,10 @@ export interface Match {
     y: number;
     w: number;
     h: number;
+    norm_x?: number;
+    norm_y?: number;
+    norm_w?: number;
+    norm_h?: number;
   };
 }
 
