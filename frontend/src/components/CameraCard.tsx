@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Eye, Circle, AlertCircle, Loader2, ZapOff } from 'lucide-react';
+import { Eye, Sparkles, AlertCircle } from 'lucide-react';
 import VideoPlayer from './VideoPlayer';
 import type { Camera } from '../types';
 
@@ -7,121 +7,115 @@ interface CameraCardProps {
   camera: Camera;
   isSelected?: boolean;
   seekTo?: number;
+  matchedTimestamp?: number;
   onOpen: (camera: Camera) => void;
 }
 
-const STATUS_CONFIG = {
-  online: {
-    label: 'LIVE',
-    icon: Circle,
-    textClass: 'text-emerald-400',
-    dotClass: 'bg-emerald-400',
-    borderClass: 'border-emerald-500/20',
-  },
-  offline: {
-    label: 'OFFLINE',
-    icon: ZapOff,
-    textClass: 'text-red-400',
-    dotClass: 'bg-red-400',
-    borderClass: 'border-red-500/15',
-  },
-  processing: {
-    label: 'PROC.',
-    icon: Loader2,
-    textClass: 'text-yellow-400',
-    dotClass: 'bg-yellow-400',
-    borderClass: 'border-yellow-500/15',
-  },
-};
-
-export default function CameraCard({ camera, isSelected, seekTo, onOpen }: CameraCardProps) {
+export default function CameraCard({
+  camera,
+  isSelected,
+  seekTo,
+  matchedTimestamp,
+  onOpen,
+}: CameraCardProps) {
   const [hover, setHover] = useState(false);
-  const cfg = STATUS_CONFIG[camera.status];
+  const isOnline = camera.status === 'online';
 
   return (
     <div
       className={`
-        glass glass-hover rounded-xl overflow-hidden cursor-pointer
-        transition-all duration-200 relative
-        ${isSelected ? 'result-card-selected' : ''}
-        ${hover ? 'scale-[1.01]' : 'scale-100'}
+        tactical-panel rounded-xl overflow-hidden cursor-pointer relative group
+        transition-all duration-300
+        ${isSelected 
+          ? 'ring-2 ring-cyan-400 shadow-[0_0_25px_rgba(6,182,212,0.3)]' 
+          : 'hover:border-cyan-500/40 hover:shadow-[0_0_20px_rgba(6,182,212,0.15)]'
+        }
       `}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={() => onOpen(camera)}
     >
-      {/* Video / Thumbnail area */}
+      {/* Reticle corner markers */}
+      <div className="reticle-corner-tl" />
+      <div className="reticle-corner-tr" />
+      <div className="reticle-corner-bl" />
+      <div className="reticle-corner-br" />
+
+      {/* VIDEO PREVIEW CONTAINER */}
       <div className="relative aspect-video bg-black scan-line">
         <VideoPlayer
           src={camera.video_url}
           seekTo={seekTo}
           cameraName={camera.camera_name}
-          className="absolute inset-0 w-full h-full"
+          className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${hover ? 'brightness-110' : 'brightness-95'}`}
           muted
         />
 
-        {/* Top overlay: camera ID badge + status */}
-        <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gradient-to-b from-black/70 to-transparent z-10">
+        {/* TOP BAR: CAM ID, NAME & LIVE BADGE */}
+        <div className="absolute top-0 left-0 right-0 flex items-center justify-between p-3 bg-gradient-to-b from-black/85 via-black/40 to-transparent z-10 pointer-events-none">
           <div className="flex items-center gap-2">
-            <span className="mono text-[10px] font-semibold text-blue-400 bg-blue-500/15 px-1.5 py-0.5 rounded border border-blue-500/20">
+            <span className="mono text-[11px] font-extrabold text-cyan-300 bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-500/40 shadow-sm">
               {camera.camera_id}
             </span>
-            <span className="text-[11px] font-medium text-white/80 truncate max-w-[100px]">
+            <span className="text-xs font-bold text-white drop-shadow-md truncate max-w-[140px]">
               {camera.camera_name}
             </span>
           </div>
 
-          {/* Status indicator */}
-          <div className={`flex items-center gap-1 ${cfg.textClass}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${cfg.dotClass} ${camera.status === 'online' ? 'pulse-dot' : ''}`} />
-            <span className="text-[9px] font-bold mono tracking-wider">{cfg.label}</span>
-          </div>
-        </div>
-
-        {/* Bottom overlay: event count + timestamp */}
-        <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gradient-to-t from-black/70 to-transparent z-10">
-          <div className="flex items-center gap-1">
-            {camera.event_count > 0 ? (
-              <>
-                <AlertCircle size={11} className="text-yellow-400" />
-                <span className="text-yellow-400 text-[10px] font-semibold mono">
-                  {camera.event_count} event{camera.event_count !== 1 ? 's' : ''}
-                </span>
-              </>
-            ) : (
-              <span className="text-slate-600 text-[10px] mono">No events</span>
+          <div className="flex items-center gap-2">
+            {/* Active camera badge */}
+            {isSelected && (
+              <span className="text-[9px] font-extrabold tracking-wider mono bg-cyan-500 text-black px-1.5 py-0.5 rounded shadow-sm">
+                ACTIVE
+              </span>
             )}
+
+            {/* Live/Offline status indicator */}
+            <div
+              className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold mono tracking-wider border ${
+                isOnline
+                  ? 'bg-emerald-950/80 text-emerald-400 border-emerald-500/40'
+                  : 'bg-rose-950/80 text-rose-400 border-rose-500/40'
+              }`}
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  isOnline ? 'bg-emerald-400 pulse-dot' : 'bg-rose-500'
+                }`}
+              />
+              {isOnline ? 'LIVE' : 'OFFLINE'}
+            </div>
           </div>
-          {camera.last_seen && (
-            <span className="text-[10px] text-slate-500 mono">
-              {new Date(camera.last_seen).toLocaleTimeString('en-US', {
-                hour12: false, hour: '2-digit', minute: '2-digit',
-              })}
-            </span>
-          )}
         </div>
 
-        {/* Selected ring */}
-        {isSelected && (
-          <div className="absolute inset-0 border-2 border-blue-500/60 rounded-inherit z-20 pointer-events-none" />
+        {/* AI MATCH BADGE OVERLAY (When triggered by query) */}
+        {matchedTimestamp !== undefined && (
+          <div className="absolute top-12 left-3 z-20 flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-500/90 text-black font-mono text-[10px] font-extrabold shadow-glow-match animate-pulse">
+            <Sparkles size={11} className="text-black" />
+            <span>AI MATCH {matchedTimestamp.toFixed(1)}s</span>
+          </div>
         )}
-      </div>
 
-      {/* Card footer */}
-      <div className="flex items-center justify-between px-3 py-2 bg-surface-2 border-t border-subtle">
-        <div className="flex flex-col">
-          <span className="text-[11px] font-medium text-slate-300 truncate">{camera.camera_name}</span>
-          {camera.location && (
-            <span className="text-[10px] text-slate-600 truncate">{camera.location}</span>
-          )}
+        {/* BOTTOM OVERLAY INFO: Events & Open button */}
+        <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between px-3 py-2 bg-gradient-to-t from-black/90 via-black/50 to-transparent z-10">
+          <div className="flex items-center gap-1.5">
+            <AlertCircle size={11} className="text-amber-400" />
+            <span className="text-[10px] text-amber-300 font-mono font-semibold">
+              {camera.event_count || 0} events detected
+            </span>
+          </div>
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen(camera);
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/40 text-cyan-300 text-[10px] font-mono font-semibold transition-colors pointer-events-auto"
+          >
+            <Eye size={10} />
+            OPEN
+          </button>
         </div>
-        <button
-          onClick={(e) => { e.stopPropagation(); onOpen(camera); }}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 transition-colors text-[11px] font-medium"
-        >
-          <Eye size={11} />
-          Open
-        </button>
       </div>
     </div>
   );

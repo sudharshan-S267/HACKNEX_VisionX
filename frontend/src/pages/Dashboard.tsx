@@ -1,22 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import {
-  Upload,
-  RefreshCw,
-  Bot,
-  AlertTriangle,
-  CheckCircle2,
-  X,
-  ChevronDown,
-  ChevronUp,
-} from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { RefreshCw } from 'lucide-react';
 
-import Header from '../components/Header';
-import CameraGrid from '../components/CameraGrid';
-import QueryBar from '../components/QueryBar';
-import ResultCard from '../components/ResultCard';
-import Timeline from '../components/Timeline';
-import EvidencePanel from '../components/EvidencePanel';
-import UploadPanel from '../components/UploadPanel';
+import TopBar from '../components/TopBar';
+import CameraSidebar from '../components/CameraSidebar';
+import CameraWall from '../components/CameraWall';
+import AIInvestigator from '../components/AIInvestigator';
+import InvestigationTimeline from '../components/InvestigationTimeline';
+import TrajectoryView from '../components/TrajectoryView';
+import EvidenceViewer from '../components/EvidenceViewer';
+import UploadModal from '../components/UploadModal';
 
 import { healthCheck, getCameras, queryVideos } from '../services/api';
 import type {
@@ -27,38 +19,38 @@ import type {
   ActiveView,
 } from '../types';
 
-const HEALTH_POLL_INTERVAL = 10_000; // 10 s
+const HEALTH_POLL_INTERVAL = 10_000;
+
+// Default 4 fallback CCTV channels
+const PLACEHOLDER_CAMERAS: Camera[] = [
+  { camera_id: 'CAM-01', camera_name: 'Main Gate', location: 'North Perimeter', status: 'offline', event_count: 0 },
+  { camera_id: 'CAM-02', camera_name: 'Parking Area', location: 'Zone B Parking', status: 'offline', event_count: 0 },
+  { camera_id: 'CAM-03', camera_name: 'Building Entrance', location: 'Lobby Portal', status: 'offline', event_count: 0 },
+  { camera_id: 'CAM-04', camera_name: 'Exit Gate', location: 'South Perimeter', status: 'offline', event_count: 0 },
+];
 
 export default function Dashboard() {
-  // ─── Backend state ────────────────────────────────────────────────────────
+  // Backend & Camera state
   const [backendStatus, setBackendStatus] = useState<BackendStatus>('connecting');
-  const [cameras, setCameras] = useState<Camera[]>([]);
+  const [cameras, setCameras] = useState<Camera[]>(PLACEHOLDER_CAMERAS);
   const [camerasLoading, setCamerasLoading] = useState(false);
 
-  // ─── Query state ──────────────────────────────────────────────────────────
+  // Query & Matches state
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryResult, setQueryResult] = useState<QueryResponse | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
 
-  // ─── Active view / seeking ────────────────────────────────────────────────
-  const [activeView, setActiveView] = useState<ActiveView | null>(null);
+  // Active Camera view / seeking state
+  const [activeView, setActiveView] = useState<ActiveView | null>({ camera_id: 'CAM-01' });
   const [seekTimestamps, setSeekTimestamps] = useState<Record<string, number | undefined>>({});
-  const [highlightedCameraId, setHighlightedCameraId] = useState<string | undefined>();
+  const [highlightedCameraId, setHighlightedCameraId] = useState<string | undefined>('CAM-01');
 
-  // ─── UI panels ────────────────────────────────────────────────────────────
+  // Modals state
   const [showUpload, setShowUpload] = useState(false);
-  const [showEvidence, setShowEvidence] = useState(false);
-  const [resultsCollapsed, setResultsCollapsed] = useState(false);
+  const [evidenceMatch, setEvidenceMatch] = useState<Match | null>(null);
 
-  // ─── Ticker for live clock in header ─────────────────────────────────────
-  const [, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  // ─── Health check ─────────────────────────────────────────────────────────
+  // Health check polling
   const checkHealth = useCallback(async () => {
     try {
       await healthCheck();
@@ -74,15 +66,17 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [checkHealth]);
 
-  // ─── Load cameras ─────────────────────────────────────────────────────────
+  // Load cameras
   const loadCameras = useCallback(async () => {
     if (backendStatus !== 'connected') return;
     setCamerasLoading(true);
     try {
       const data = await getCameras();
-      setCameras(data);
+      if (data && data.length > 0) {
+        setCameras(data);
+      }
     } catch {
-      // silently fall back to placeholder grid
+      // Keep existing/placeholder cameras
     } finally {
       setCamerasLoading(false);
     }
@@ -92,19 +86,26 @@ export default function Dashboard() {
     loadCameras();
   }, [loadCameras]);
 
-  // ─── Query submission ─────────────────────────────────────────────────────
+  // Natural language query handler
   const handleQuery = useCallback(async (query: string) => {
     setQueryLoading(true);
     setQueryError(null);
     setQueryResult(null);
     setSelectedMatch(null);
     setSeekTimestamps({});
-    setHighlightedCameraId(undefined);
 
     try {
       const result = await queryVideos({ query });
       setQueryResult(result);
-      setResultsCollapsed(false);
+
+      // If matches exist, auto-select the highest confidence match
+      if (result.matches && result.matches.length > 0) {
+        const first = result.matches[0];
+        setSelectedMatch(first);
+        setHighlightedCameraId(first.camera_id);
+        setActiveView({ camera_id: first.camera_id, timestamp: first.timestamp });
+        setSeekTimestamps({ [first.camera_id]: first.timestamp });
+      }
     } catch (err) {
       setQueryError(
         err instanceof Error ? err.message : 'Unable to process query. Please try again.'
@@ -114,8 +115,8 @@ export default function Dashboard() {
     }
   }, []);
 
-  // ─── Result click: jump to camera + timestamp ─────────────────────────────
-  const handleMatchClick = useCallback((match: Match) => {
+  // Jump to specific match (seek video & highlight)
+  const handleSelectMatch = useCallback((match: Match) => {
     setSelectedMatch(match);
     setHighlightedCameraId(match.camera_id);
     setActiveView({ camera_id: match.camera_id, timestamp: match.timestamp });
@@ -125,291 +126,136 @@ export default function Dashboard() {
     }));
   }, []);
 
-  // ─── Trajectory jump ──────────────────────────────────────────────────────
-  const handleTrajectoryJump = useCallback((cameraId: string, timestamp: number) => {
+  // Open evidence viewer modal
+  const handleViewEvidence = useCallback((match: Match) => {
+    setEvidenceMatch(match);
+  }, []);
+
+  // Select camera from sidebar
+  const handleSelectCamera = useCallback((camera: Camera) => {
+    setActiveView({ camera_id: camera.camera_id });
+    setHighlightedCameraId(camera.camera_id);
+  }, []);
+
+  // Jump from timeline or trajectory
+  const handleJumpToCamera = useCallback((cameraId: string, timestamp: number) => {
     setHighlightedCameraId(cameraId);
     setActiveView({ camera_id: cameraId, timestamp });
     setSeekTimestamps((prev) => ({ ...prev, [cameraId]: timestamp }));
   }, []);
 
-  // ─── Open camera full view ────────────────────────────────────────────────
-  const handleOpenCamera = useCallback((camera: Camera) => {
-    setActiveView({ camera_id: camera.camera_id });
-    setHighlightedCameraId(camera.camera_id);
-  }, []);
-
-  // ─── After upload, reload cameras ─────────────────────────────────────────
-  const handleUploaded = useCallback(() => {
-    loadCameras();
-  }, [loadCameras]);
-
+  const totalEvents = cameras.reduce((sum, c) => sum + (c.event_count || 0), 0);
   const onlineCount = cameras.filter((c) => c.status === 'online').length;
-  const hasResults = queryResult && queryResult.matches.length > 0;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] flex flex-col">
-      <Header
+    <div className="min-h-screen bg-command-950 text-slate-200 flex flex-col font-sans tactical-grid-bg">
+      {/* 1. TOP BAR NAVIGATION */}
+      <TopBar
         backendStatus={backendStatus}
-        cameraCount={cameras.length || 4}
+        cameraCount={cameras.length}
         onlineCount={onlineCount}
+        totalEvents={totalEvents}
+        onRetryConnection={checkHealth}
       />
 
-      {/* Offline banner */}
+      {/* 2. BACKEND OFFLINE BANNER (Enhanced presentation, does not disable UI inspection) */}
       {backendStatus === 'disconnected' && (
-        <div className="bg-red-500/10 border-b border-red-500/20 px-6 py-2 flex items-center gap-3">
-          <AlertTriangle size={14} className="text-red-400 flex-shrink-0" />
-          <p className="text-red-300 text-xs font-medium">
-            Backend unavailable. Start the backend server at{' '}
-            <code className="mono text-red-200 bg-red-500/10 px-1 rounded">
-              {import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}
-            </code>{' '}
-            — queries and uploads are disabled until the connection is restored.
-          </p>
+        <div className="bg-rose-950/40 border-b border-rose-500/30 px-6 py-2 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2 h-2 rounded-full bg-rose-500 pulse-dot" />
+            <span className="text-rose-300 text-xs font-mono font-bold tracking-wider uppercase">
+              BACKEND OFFLINE
+            </span>
+            <span className="text-slate-400 text-xs font-mono">
+              API TARGET: <code className="text-rose-200 bg-rose-900/30 px-1 py-0.5 rounded border border-rose-500/20">{import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}</code>
+            </span>
+            <span className="text-slate-400 text-xs hidden md:inline">
+              — Dashboard in inspection standby mode. Start backend server to query footage.
+            </span>
+          </div>
+
           <button
             onClick={checkHealth}
-            className="ml-auto flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 transition-colors flex-shrink-0"
+            className="flex items-center gap-1.5 px-3 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 hover:text-white text-xs font-mono font-bold transition-all"
           >
             <RefreshCw size={12} />
-            Retry
+            RETRY
           </button>
         </div>
       )}
 
-      {/* Main layout */}
-      <main className="flex-1 flex gap-4 p-4 overflow-hidden">
-        {/* ── LEFT COLUMN: Camera grid ──────────────────────────────────── */}
-        <div className="flex-1 flex flex-col gap-4 min-w-0">
-          {/* Camera grid */}
-          <div className="glass rounded-xl p-4">
-            <CameraGrid
-              cameras={cameras}
-              loading={camerasLoading}
-              activeView={activeView}
-              highlightedCameraId={highlightedCameraId}
-              seekTimestamps={seekTimestamps}
-              onOpenCamera={handleOpenCamera}
-            />
-          </div>
+      {/* 3. MAIN COMMAND CENTER GRID */}
+      <div className="flex-1 flex flex-col gap-3.5 p-4 overflow-y-auto">
+        {/* UPPER SECTION: SIDEBAR + CAMERA WALL + AI INVESTIGATOR */}
+        <div className="flex flex-col lg:flex-row gap-3.5 items-stretch">
+          {/* LEFT: Camera Control Panel */}
+          <CameraSidebar
+            cameras={cameras}
+            selectedCameraId={highlightedCameraId}
+            onSelectCamera={handleSelectCamera}
+            onOpenUpload={() => setShowUpload(true)}
+            backendStatus={backendStatus}
+          />
 
-          {/* Query interface */}
-          <div className="glass rounded-xl p-4">
-            <QueryBar
-              onSubmit={handleQuery}
-              loading={queryLoading}
-              disabled={backendStatus === 'disconnected'}
-            />
-          </div>
+          {/* CENTER: Camera Wall (2x2 Grid) */}
+          <CameraWall
+            cameras={cameras}
+            loading={camerasLoading}
+            activeView={activeView}
+            highlightedCameraId={highlightedCameraId}
+            seekTimestamps={seekTimestamps}
+            onOpenCamera={handleSelectCamera}
+          />
 
-          {/* Query results */}
-          {(queryResult || queryError) && (
-            <div className="glass rounded-xl overflow-hidden animate-fade-in-up">
-              {/* Results header */}
-              <div className="flex items-center justify-between px-4 py-3 border-b border-subtle">
-                <div className="flex items-center gap-2">
-                  <Bot size={14} className="text-violet-400" />
-                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
-                    AI Response
-                  </span>
-                  {hasResults && (
-                    <span className="text-[10px] text-slate-600 mono">
-                      {queryResult!.matches.length} match{queryResult!.matches.length !== 1 ? 'es' : ''}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {queryResult?.processing_time_ms && (
-                    <span className="text-[10px] text-slate-600 mono">
-                      {queryResult.processing_time_ms}ms
-                    </span>
-                  )}
-                  <button
-                    onClick={() => setResultsCollapsed((c) => !c)}
-                    className="text-slate-500 hover:text-slate-300 transition-colors"
-                  >
-                    {resultsCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-                  </button>
-                  <button
-                    onClick={() => { setQueryResult(null); setQueryError(null); }}
-                    className="text-slate-500 hover:text-slate-300 transition-colors"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              </div>
-
-              {!resultsCollapsed && (
-                <div className="p-4 space-y-4">
-                  {/* Error */}
-                  {queryError && (
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                      <AlertTriangle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
-                      <p className="text-sm text-red-300">{queryError}</p>
-                    </div>
-                  )}
-
-                  {/* AI answer */}
-                  {queryResult?.answer && (
-                    <div className="flex items-start gap-3 p-3 rounded-lg bg-violet-500/8 border border-violet-500/15">
-                      <div className="w-5 h-5 rounded-md bg-violet-600/30 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <Bot size={11} className="text-violet-400" />
-                      </div>
-                      <p className="text-sm text-slate-200 leading-relaxed">{queryResult.answer}</p>
-                    </div>
-                  )}
-
-                  {/* No matches */}
-                  {queryResult && queryResult.matches.length === 0 && (
-                    <div className="flex items-center gap-2 text-slate-500 text-sm py-2">
-                      <CheckCircle2 size={14} />
-                      No matching events found for this query.
-                    </div>
-                  )}
-
-                  {/* Match cards */}
-                  {hasResults && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] text-slate-600 uppercase tracking-wider font-medium">
-                        Matched Events
-                      </p>
-                      <div className="grid grid-cols-1 gap-2 max-h-[340px] overflow-y-auto pr-1">
-                        {queryResult!.matches.map((match, i) => (
-                          <ResultCard
-                            key={`${match.camera_id}-${match.timestamp}-${i}`}
-                            match={match}
-                            index={i}
-                            isSelected={
-                              selectedMatch?.camera_id === match.camera_id &&
-                              selectedMatch?.timestamp === match.timestamp
-                            }
-                            onClick={(m) => {
-                              handleMatchClick(m);
-                              if (m.evidence_url) setShowEvidence(true);
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          {/* RIGHT: AI Investigator */}
+          <AIInvestigator
+            onQuery={handleQuery}
+            loading={queryLoading}
+            disabled={backendStatus === 'disconnected'}
+            queryResult={queryResult}
+            queryError={queryError}
+            selectedMatch={selectedMatch}
+            onSelectMatch={handleSelectMatch}
+            onViewEvidence={handleViewEvidence}
+          />
         </div>
 
-        {/* ── RIGHT COLUMN: Trajectory + actions ───────────────────────── */}
-        <div className="w-72 flex-shrink-0 flex flex-col gap-4">
-          {/* Action buttons */}
-          <div className="glass rounded-xl p-4 space-y-2">
-            <p className="text-[10px] text-slate-600 uppercase tracking-wider font-medium mb-3">
-              System Actions
-            </p>
-            <button
-              onClick={() => setShowUpload(true)}
-              className="
-                w-full flex items-center gap-3 px-3 py-2.5 rounded-lg
-                bg-blue-500/10 border border-blue-500/20
-                text-blue-400 hover:bg-blue-500/15 hover:border-blue-500/35
-                transition-all text-sm font-medium
-              "
-            >
-              <Upload size={14} />
-              Upload Camera Videos
-            </button>
-            <button
-              onClick={loadCameras}
-              disabled={backendStatus !== 'connected'}
-              className="
-                w-full flex items-center gap-3 px-3 py-2.5 rounded-lg
-                bg-white/5 border border-subtle
-                text-slate-400 hover:text-white hover:bg-white/8
-                disabled:opacity-40 disabled:cursor-not-allowed
-                transition-all text-sm font-medium
-              "
-            >
-              <RefreshCw size={14} />
-              Refresh Cameras
-            </button>
-          </div>
+        {/* 4. LOWER SECTION: INVESTIGATION TIMELINE & CROSS-CAMERA TRAJECTORY */}
+        <div className="space-y-3">
+          {/* Horizontal Investigation Timeline */}
+          <InvestigationTimeline
+            matches={queryResult?.matches || []}
+            selectedMatch={selectedMatch}
+            onSelectEvent={handleSelectMatch}
+          />
 
-          {/* Trajectory panel */}
-          {queryResult?.trajectory && queryResult.trajectory.length > 0 && (
-            <Timeline
-              trajectory={queryResult.trajectory}
-              onJump={handleTrajectoryJump}
-            />
-          )}
-
-          {/* Evidence quick-view */}
-          {selectedMatch && !showEvidence && (
-            <div className="glass rounded-xl p-4 animate-slide-in-right">
-              <p className="text-[10px] text-slate-600 uppercase tracking-wider font-medium mb-3">
-                Selected Event
-              </p>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="mono text-xs text-blue-400">{selectedMatch.camera_id}</span>
-                  <span className="mono text-xs text-slate-500">
-                    {Math.floor(selectedMatch.timestamp / 60).toString().padStart(2, '0')}:
-                    {Math.floor(selectedMatch.timestamp % 60).toString().padStart(2, '0')}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-300 leading-relaxed">
-                  {selectedMatch.description}
-                </p>
-                {selectedMatch.evidence_url && (
-                  <button
-                    onClick={() => setShowEvidence(true)}
-                    className="
-                      w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg
-                      bg-violet-500/10 border border-violet-500/20
-                      text-violet-400 hover:bg-violet-500/20
-                      transition-all text-xs font-medium
-                    "
-                  >
-                    View Evidence Clip
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Stats card */}
-          <div className="glass rounded-xl p-4">
-            <p className="text-[10px] text-slate-600 uppercase tracking-wider font-medium mb-3">
-              Session Stats
-            </p>
-            <div className="space-y-2">
-              {[
-                { label: 'Cameras', value: cameras.length || 4 },
-                { label: 'Online', value: onlineCount },
-                {
-                  label: 'Events',
-                  value: cameras.reduce((a, c) => a + c.event_count, 0),
-                },
-                { label: 'Query Results', value: queryResult?.matches.length ?? '—' },
-              ].map(({ label, value }) => (
-                <div key={label} className="flex items-center justify-between">
-                  <span className="text-xs text-slate-500">{label}</span>
-                  <span className="mono text-xs font-semibold text-white">{value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          {/* Cross-Camera Trajectory (When available in query response) */}
+          <TrajectoryView
+            trajectory={queryResult?.trajectory}
+            onJump={handleJumpToCamera}
+          />
         </div>
-      </main>
+      </div>
 
-      {/* Modals */}
+      {/* MODALS */}
       {showUpload && (
-        <UploadPanel
-          onUploaded={handleUploaded}
+        <UploadModal
+          onUploaded={() => {
+            loadCameras();
+            setShowUpload(false);
+          }}
           onClose={() => setShowUpload(false)}
         />
       )}
 
-      {showEvidence && selectedMatch && (
-        <EvidencePanel
-          match={selectedMatch}
-          onClose={() => setShowEvidence(false)}
+      {evidenceMatch && (
+        <EvidenceViewer
+          match={evidenceMatch}
+          onClose={() => setEvidenceMatch(null)}
+          onOpenCamera={(camId) => {
+            setHighlightedCameraId(camId);
+            setActiveView({ camera_id: camId });
+          }}
         />
       )}
     </div>

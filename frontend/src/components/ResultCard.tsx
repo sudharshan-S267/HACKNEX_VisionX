@@ -1,24 +1,12 @@
-import { ExternalLink, Camera, Clock, Target, ChevronRight } from 'lucide-react';
+import { Clock, Play } from 'lucide-react';
 import type { Match } from '../types';
-import { buildEvidenceUrl } from '../services/api';
 
 interface ResultCardProps {
   match: Match;
   index: number;
   isSelected?: boolean;
   onClick: (match: Match) => void;
-}
-
-function confidenceColor(c: number) {
-  if (c >= 0.85) return { text: 'text-emerald-400', bar: 'bg-emerald-500', label: 'HIGH' };
-  if (c >= 0.6) return { text: 'text-yellow-400', bar: 'bg-yellow-500', label: 'MED' };
-  return { text: 'text-red-400', bar: 'bg-red-500', label: 'LOW' };
-}
-
-function eventTypeLabel(t: string) {
-  return t
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  onViewEvidence: (match: Match) => void;
 }
 
 function formatTs(ts: number) {
@@ -28,99 +16,101 @@ function formatTs(ts: number) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${ms}`;
 }
 
-export default function ResultCard({ match, index, isSelected, onClick }: ResultCardProps) {
-  const conf = confidenceColor(match.confidence);
+export default function ResultCard({
+  match,
+  index: _index,
+  isSelected,
+  onClick,
+  onViewEvidence,
+}: ResultCardProps) {
+  const confidencePct = Math.round(match.confidence * 100);
+  const isHighConf = confidencePct >= 80;
 
   return (
     <div
       onClick={() => onClick(match)}
       className={`
-        glass glass-hover rounded-xl p-4 cursor-pointer
-        transition-all duration-200 animate-fade-in-up
-        ${isSelected ? 'result-card-selected' : ''}
+        tactical-card rounded-lg p-3 cursor-pointer relative group transition-all duration-200 border
+        ${
+          isSelected
+            ? 'bg-cyan-950/40 border-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.25)]'
+            : 'hover:border-cyan-500/40'
+        }
       `}
-      style={{ animationDelay: `${index * 60}ms` }}
     >
-      {/* Header row */}
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex items-center gap-2">
-          {/* Index */}
-          <div className="w-5 h-5 rounded bg-blue-500/15 border border-blue-500/25 flex items-center justify-center">
-            <span className="text-blue-400 text-[10px] font-bold mono">{index + 1}</span>
-          </div>
+      {/* Reticle on selected */}
+      {isSelected && (
+        <>
+          <div className="reticle-corner-tl" />
+          <div className="reticle-corner-tr" />
+        </>
+      )}
 
-          {/* Camera badge */}
-          <span className="mono text-[10px] font-semibold text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded border border-blue-500/20">
+      {/* Top row: Camera ID, Name & Timestamp */}
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="mono text-[10px] font-extrabold text-cyan-300 bg-cyan-900/40 border border-cyan-500/30 px-1.5 py-0.5 rounded">
             {match.camera_id}
           </span>
-          <span className="text-xs font-medium text-white truncate max-w-[120px]">
+          <span className="text-xs font-bold text-white truncate max-w-[130px]">
             {match.camera_name}
           </span>
         </div>
 
-        {/* Confidence */}
-        <div className="flex flex-col items-end gap-1">
-          <div className={`flex items-center gap-1 ${conf.text}`}>
-            <Target size={11} />
-            <span className="text-[10px] font-bold mono">{conf.label}</span>
-          </div>
-          <span className={`text-xs font-semibold mono ${conf.text}`}>
-            {Math.round(match.confidence * 100)}%
-          </span>
-        </div>
-      </div>
-
-      {/* Confidence bar */}
-      <div className="confidence-bar mb-3">
-        <div
-          className={`confidence-fill ${conf.bar}`}
-          style={{ width: `${match.confidence * 100}%` }}
-        />
-      </div>
-
-      {/* Event type + timestamp */}
-      <div className="flex items-center gap-3 mb-2">
-        <div className="flex items-center gap-1.5">
-          <Camera size={11} className="text-slate-500" />
-          <span className="text-[11px] text-slate-400 font-medium">
-            {eventTypeLabel(match.event_type)}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Clock size={11} className="text-slate-500" />
-          <span className="mono text-[11px] text-slate-400">
-            {formatTs(match.timestamp)}
-          </span>
+        <div className="flex items-center gap-1 text-slate-300 mono text-xs font-semibold bg-white/[0.04] px-1.5 py-0.5 rounded border border-white/[0.05]">
+          <Clock size={11} className="text-cyan-400" />
+          <span>{formatTs(match.timestamp)}</span>
         </div>
       </div>
 
       {/* Description */}
-      <p className="text-xs text-slate-300 leading-relaxed mb-3">
+      <p className="text-xs text-slate-300 leading-snug mb-2 font-medium">
         {match.description}
       </p>
 
-      {/* Actions */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={(e) => { e.stopPropagation(); onClick(match); }}
-          className="flex items-center gap-1.5 text-[11px] text-blue-400 hover:text-blue-300 font-medium transition-colors"
-        >
-          <ChevronRight size={12} />
-          Jump to timestamp
-        </button>
-
-        {match.evidence_url && (
-          <a
-            href={buildEvidenceUrl(match.evidence_url)}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20 transition-colors text-[11px] font-medium"
+      {/* Confidence Bar */}
+      <div className="mb-3 space-y-1">
+        <div className="flex items-center justify-between text-[10px] font-mono">
+          <span className="text-slate-400 uppercase tracking-wider">Confidence</span>
+          <span
+            className={`font-bold ${
+              isHighConf ? 'text-emerald-400' : 'text-amber-400'
+            }`}
           >
-            <ExternalLink size={10} />
-            View Evidence
-          </a>
-        )}
+            {confidencePct}%
+          </span>
+        </div>
+        <div className="confidence-bar">
+          <div
+            className={`confidence-fill ${
+              isHighConf ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-amber-400'
+            }`}
+            style={{ width: `${confidencePct}%` }}
+          />
+        </div>
+      </div>
+
+      {/* Action: VIEW EVIDENCE */}
+      <div className="flex items-center justify-between pt-2 border-t border-white/[0.06]">
+        <span className="text-[10px] text-cyan-400 font-mono tracking-wider">
+          CLICK TO SEEK
+        </span>
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewEvidence(match);
+          }}
+          className="
+            flex items-center gap-1.5 px-2.5 py-1 rounded
+            bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-500/30 hover:border-cyan-500/60
+            text-cyan-300 hover:text-white text-[10px] font-bold tracking-wider uppercase mono
+            transition-all duration-150 active:scale-95
+          "
+        >
+          <Play size={10} className="fill-cyan-400" />
+          VIEW EVIDENCE
+        </button>
       </div>
     </div>
   );
