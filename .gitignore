@@ -27,6 +27,7 @@ backend/data/videos/*.mp4
 backend/data/videos/*.avi
 backend/data/videos/*.mov
 backend/data/evidence/*.mp4
+backend/data/debug/
 !backend/data/videos/.gitkeep
 !backend/data/evidence/.gitkeep
 *.pt

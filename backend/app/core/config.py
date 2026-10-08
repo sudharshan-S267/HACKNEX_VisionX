@@ -41,8 +41,18 @@ class Settings:
     BASE_DIR: Path = BASE_DIR
 
     # SQLite Database Path
-    SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "visiontrace.db")
-    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///./{SQLITE_DB_PATH}")
+    SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "data/visiontrace.db")
+    _raw_db_url: str = os.getenv("DATABASE_URL", f"sqlite:///./{SQLITE_DB_PATH}")
+    if _raw_db_url.startswith("sqlite:///./"):
+        _rel_path = _raw_db_url[len("sqlite:///./"):]
+        _abs_db_path = (BASE_DIR / _rel_path).resolve()
+        DATABASE_URL: str = f"sqlite:///{_abs_db_path.as_posix()}"
+    elif _raw_db_url.startswith("sqlite:///") and not _raw_db_url.startswith("sqlite:////") and not (len(_raw_db_url) > 11 and _raw_db_url[10] == ":"):
+        _rel_path = _raw_db_url[len("sqlite:///"):]
+        _abs_db_path = (BASE_DIR / _rel_path).resolve()
+        DATABASE_URL: str = f"sqlite:///{_abs_db_path.as_posix()}"
+    else:
+        DATABASE_URL: str = _raw_db_url
 
     # Video and Evidence Storage Paths
     _raw_video_dir: str = os.getenv("VIDEO_DIR", "./data/videos")

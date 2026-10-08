@@ -54,6 +54,11 @@ class VideoService:
                 f"Resetting to 'failed'. Re-upload to reprocess."
             )
             v.processing_status = "failed"
+            v.error_message = "Server restarted while video was processing."
+            camera = db.query(Camera).filter(Camera.camera_id == v.camera_id).first()
+            if camera and camera.status == "processing":
+                has_events = db.query(Event).filter(Event.camera_id == v.camera_id).count() > 0
+                camera.status = "online" if has_events else "offline"
         if stuck:
             db.commit()
 
@@ -407,6 +412,11 @@ class VideoService:
                 video = db.query(Video).filter(Video.id == video_id).first()
                 if video:
                     video.processing_status = "failed"
+                    video.error_message = str(e)
+                    camera = db.query(Camera).filter(Camera.camera_id == video.camera_id).first()
+                    if camera and camera.status == "processing":
+                        has_events = db.query(Event).filter(Event.camera_id == video.camera_id).count() > 0
+                        camera.status = "online" if has_events else "offline"
                     db.commit()
             except Exception:
                 pass
