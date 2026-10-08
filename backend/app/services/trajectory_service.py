@@ -135,7 +135,7 @@ class TrajectoryService:
                 timestamp=round(float(first_ev.timestamp), 2),
                 location=first_ev.location or self.get_camera_location(first_ev.camera_id, db),
                 confidence=round(float(first_ev.confidence or 1.0), 2),
-                evidence_url=first_ev.evidence_url or f"/api/v1/evidence/{first_ev.event_id or first_ev.id}",
+                evidence_url=f"/api/v1/evidence/{first_ev.id}",
             )
         )
 
@@ -203,7 +203,7 @@ class TrajectoryService:
                     timestamp=round(float(curr_ev.timestamp), 2),
                     location=curr_ev.location or self.get_camera_location(curr_ev.camera_id, db),
                     confidence=round(float(curr_ev.confidence or 1.0), 2),
-                    evidence_url=curr_ev.evidence_url or f"/api/v1/evidence/{curr_ev.event_id or curr_ev.id}",
+                    evidence_url=f"/api/v1/evidence/{curr_ev.id}",
                 )
             )
 

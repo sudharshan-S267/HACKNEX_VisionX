@@ -209,7 +209,7 @@ class RetrievalService:
 
             cam_name = ev.camera_name or self.get_camera_name(ev.camera_id, db)
             desc = ev.description or f"{ev.color or ''} {ev.object_type or 'object'} detected".strip()
-            evidence_url = ev.evidence_url or f"/api/v1/evidence/{ev.event_id or ev.id}"
+            evidence_url = f"/api/v1/evidence/{ev.id}"
 
             matches.append(
                 Match(

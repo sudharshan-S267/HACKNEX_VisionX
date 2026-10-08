@@ -38,7 +38,7 @@ class DetectionService:
         
         # Run inference (use tracking if persist_track is True)
         if persist_track:
-            results = model.track(frame, persist=True, verbose=False, conf=conf_threshold)
+            results = model.track(frame, persist=True, tracker="bytetrack.yaml", verbose=False, conf=conf_threshold)
         else:
             results = model(frame, verbose=False, conf=conf_threshold)
 
