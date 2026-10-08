@@ -96,10 +96,22 @@ export interface UploadEntry {
 
 export interface UploadResponse {
   camera_id: string;
-  camera_name: string;
+  camera_name?: string;
   status: 'processing' | 'ready';
   video_url?: string;
   message?: string;
+  video_id?: number;
+}
+
+export interface VideoStatusResponse {
+  video_id: number;
+  camera_id: string;
+  filename: string;
+  status: 'uploaded' | 'processing' | 'completed' | 'failed';
+  error_message?: string;
+  fps?: number;
+  duration?: number;
+  event_count?: number;
 }
 
 // ─── Health ────────────────────────────────────────────────────────────────

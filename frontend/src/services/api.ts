@@ -92,6 +92,15 @@ export async function uploadVideo(
   }
 }
 
+export async function getVideoStatus(videoId: number) {
+  try {
+    const { data } = await client.get(`/api/v1/videos/${videoId}/status`);
+    return data;
+  } catch (err) {
+    throw new Error(`Failed to check video status: ${extractMessage(err)}`);
+  }
+}
+
 // ─── Query ─────────────────────────────────────────────────────────────────
 
 export async function queryVideos(req: QueryRequest): Promise<QueryResponse> {

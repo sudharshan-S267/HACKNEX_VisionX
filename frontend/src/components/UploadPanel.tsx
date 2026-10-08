@@ -10,8 +10,8 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
-import { uploadVideo } from '../services/api';
-import type { UploadEntry } from '../types';
+import { uploadVideo, getVideoStatus } from '../services/api';
+import type { UploadEntry, VideoStatusResponse } from '../types';
 
 interface UploadPanelProps {
   onUploaded: () => void;
@@ -119,17 +119,32 @@ export default function UploadPanel({ onUploaded, onClose }: UploadPanelProps) {
       pending.map(async (entry) => {
         updateEntry(entry.id, { status: 'uploading', progress: 0, error: undefined });
         try {
-          await uploadVideo(entry.camera_id, entry.file, (pct) => {
+          const res = await uploadVideo(entry.camera_id, entry.file, (pct) => {
             updateEntry(entry.id, { progress: pct });
           });
+          
+          if (!res.video_id) {
+             throw new Error("No video ID returned from upload");
+          }
+          
           updateEntry(entry.id, { status: 'processing', progress: 100 });
-          // Simulate brief processing wait
-          await new Promise((r) => setTimeout(r, 1200));
-          updateEntry(entry.id, { status: 'ready' });
+          
+          // Poll for processing completion
+          while (true) {
+            await new Promise((r) => setTimeout(r, 2000)); // check every 2s
+            const status: VideoStatusResponse = await getVideoStatus(res.video_id);
+            if (status.status === 'completed') {
+              updateEntry(entry.id, { status: 'ready' });
+              break;
+            } else if (status.status === 'failed') {
+              throw new Error(status.error_message || "Processing failed");
+            }
+          }
+          
         } catch (err) {
           updateEntry(entry.id, {
             status: 'error',
-            error: err instanceof Error ? err.message : 'Upload failed',
+            error: err instanceof Error ? err.message : 'Upload/Processing failed',
           });
         }
       })

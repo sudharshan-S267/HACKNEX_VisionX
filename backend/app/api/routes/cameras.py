@@ -35,18 +35,20 @@ router = APIRouter(prefix="/api/v1", tags=["Cameras & Video"])
 @router.get("/cameras", response_model=List[CameraResponse])
 def get_cameras(db: Session = Depends(get_db)):
     """
-    API 2:
     GET /api/v1/cameras
     Returns list of registered cameras.
     """
     cameras = db.query(Camera).all()
     result = []
     for cam in cameras:
-        # Check if video exists either as endpoint or file
         v_url = None
         if cam.video_url:
-            v_url = cam.video_url if cam.video_url.startswith("/api") or cam.video_url.startswith("http") else f"/api/v1/cameras/{cam.camera_id}/video"
-        
+            v_url = (
+                cam.video_url
+                if cam.video_url.startswith("/api") or cam.video_url.startswith("http")
+                else f"/api/v1/cameras/{cam.camera_id}/video"
+            )
+
         result.append(
             CameraResponse(
                 camera_id=cam.camera_id,
@@ -71,13 +73,8 @@ async def upload_camera_video(
     db: Session = Depends(get_db)
 ):
     """
-    API 3:
     POST /api/v1/cameras/{camera_id}/video
-    Accept multipart/form-data.
-    Parameters:
-    - video
-    - optional camera_name
-    Save under data/videos/ and trigger background processing.
+    Accept multipart/form-data, save under data/videos/, trigger background YOLO processing.
     """
     if not video.filename:
         raise HTTPException(
@@ -85,7 +82,6 @@ async def upload_camera_video(
             detail="Uploaded file must have a filename."
         )
 
-    # Read uploaded bytes
     content = await video.read()
     if not content:
         raise HTTPException(
@@ -93,60 +89,74 @@ async def upload_camera_video(
             detail="Uploaded video file is empty."
         )
 
-    # Save video under data/videos/
-    saved_filename = f"{camera_id}_{video.filename}" if not video.filename.startswith(camera_id) else video.filename
+    # Save the uploaded bytes
+    saved_filename = (
+        f"{camera_id}_{video.filename}"
+        if not video.filename.startswith(camera_id)
+        else video.filename
+    )
     saved_path = video_service.save_uploaded_video(content, saved_filename)
 
-    # Default camera name resolution
-    default_name = camera_name or f"Camera {camera_id}"
-    if not camera_name:
-        # Check filename patterns like CAM01_MainGate.mp4
-        stem = Path(video.filename).stem
-        if "_" in stem:
-            parts = stem.split("_", 1)
-            default_name = parts[1].replace("_", " ").title()
+    logger.info(f"[UPLOAD] Saved {saved_filename} ({len(content):,} bytes) for camera {camera_id}")
+    logger.info(f"[UPLOAD] Absolute path: {saved_path}")
+    logger.info(f"[UPLOAD] File exists: {saved_path.exists()}")
+
+    # Resolve camera name
+    default_name = camera_name or settings.CAMERAS.get(camera_id, {}).get(
+        "camera_name", f"Camera {camera_id}"
+    )
 
     # Create or update camera record
     camera = db.query(Camera).filter(Camera.camera_id == camera_id).first()
     if not camera:
         camera = Camera(
             camera_id=camera_id,
-            name=default_name,
+            camera_name=default_name,
             status="processing",
-            video_path=str(saved_path)
+            video_url=str(saved_path),
         )
         db.add(camera)
     else:
         if camera_name:
-            camera.name = camera_name
+            camera.camera_name = camera_name
         camera.status = "processing"
-        camera.video_path = str(saved_path)
+        camera.video_url = str(saved_path)
 
     # Create video record
     video_record = Video(
         camera_id=camera_id,
         filename=saved_filename,
-        processing_status="processing"
+        processing_status="uploaded",
     )
     db.add(video_record)
     db.commit()
     db.refresh(video_record)
 
-    # Queue background processing
+    logger.info(
+        f"[UPLOAD] Video record id={video_record.id} created for camera {camera_id}. "
+        f"Scheduling background processing."
+    )
+
+    # Queue background YOLO processing
     background_tasks.add_task(video_service.process_video_background, video_record.id)
 
     return VideoUploadResponse(
         camera_id=camera_id,
         status="processing",
-        message="Video uploaded successfully"
+        message=f"Video uploaded successfully. Processing started (video_id={video_record.id}).",
+        video_id=video_record.id,
     )
 
 
 @router.get("/cameras/{camera_id}/video")
 def get_camera_video(camera_id: str, db: Session = Depends(get_db)):
     """Return/stream the uploaded video file for a camera."""
-    # Look up Video record or Camera record
-    video_rec = db.query(Video).filter(Video.camera_id == camera_id).order_by(Video.id.desc()).first()
+    video_rec = (
+        db.query(Video)
+        .filter(Video.camera_id == camera_id)
+        .order_by(Video.id.desc())
+        .first()
+    )
     file_path = None
     if video_rec and video_rec.filename:
         candidate = settings.VIDEO_DIR / video_rec.filename
@@ -154,54 +164,162 @@ def get_camera_video(camera_id: str, db: Session = Depends(get_db)):
             file_path = str(candidate)
 
     if not file_path:
-        # Check files matching camera_id in VIDEO_DIR
+        # Fallback: check files matching camera_id in VIDEO_DIR
         for p in settings.VIDEO_DIR.glob(f"{camera_id}_*"):
             if p.is_file():
                 file_path = str(p)
                 break
 
     if not file_path or not os.path.exists(file_path):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video file not found for this camera.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file not found for camera {camera_id}."
+        )
 
     return FileResponse(file_path, media_type="video/mp4")
+
+
+@router.get("/cameras/{camera_id}/events", response_model=List[EventResponse])
+def get_camera_events(
+    camera_id: str,
+    object_type: Optional[str] = None,
+    color: Optional[str] = None,
+    limit: int = 100,
+    db: Session = Depends(get_db)
+):
+    """
+    GET /api/v1/cameras/{camera_id}/events
+    Returns detected events for a specific camera.
+    """
+    query = db.query(Event).filter(Event.camera_id == camera_id)
+    if object_type:
+        query = query.filter(Event.object_type == object_type)
+    if color:
+        query = query.filter(Event.color == color)
+    return query.order_by(Event.timestamp.asc()).limit(limit).all()
+
+
+@router.get("/cameras/{camera_id}/status")
+def get_camera_processing_status(camera_id: str, db: Session = Depends(get_db)):
+    """
+    GET /api/v1/cameras/{camera_id}/status
+    Returns the processing status of the most recent video for this camera.
+    """
+    video_rec = (
+        db.query(Video)
+        .filter(Video.camera_id == camera_id)
+        .order_by(Video.id.desc())
+        .first()
+    )
+    if not video_rec:
+        return {"camera_id": camera_id, "status": "no_video", "video_id": None}
+
+    event_count = (
+        db.query(Event)
+        .filter(Event.camera_id == camera_id, Event.video_id == video_rec.id)
+        .count()
+    )
+
+    return {
+        "camera_id": camera_id,
+        "video_id": video_rec.id,
+        "filename": video_rec.filename,
+        "status": video_rec.processing_status,
+        "fps": video_rec.fps,
+        "duration": video_rec.duration,
+        "event_count": event_count,
+    }
+
+
+@router.get("/videos/{video_id}/status")
+def get_video_status(video_id: int, db: Session = Depends(get_db)):
+    """
+    GET /api/v1/videos/{video_id}/status
+    Returns processing status for a specific video by ID.
+    """
+    video_rec = db.query(Video).filter(Video.id == video_id).first()
+    if not video_rec:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video id={video_id} not found."
+        )
+
+    event_count = (
+        db.query(Event)
+        .filter(Event.video_id == video_id)
+        .count()
+    )
+
+    return {
+        "video_id": video_rec.id,
+        "camera_id": video_rec.camera_id,
+        "filename": video_rec.filename,
+        "status": video_rec.processing_status,
+        "fps": video_rec.fps,
+        "duration": video_rec.duration,
+        "event_count": event_count,
+    }
 
 
 @router.get("/evidence/{event_id}")
 def get_evidence_clip(event_id: int, db: Session = Depends(get_db)):
     """
     GET /api/v1/evidence/{event_id}
-    Returns playable evidence video for the requested event.
+    Returns playable evidence video clip for the requested event.
+    The clip is extracted from the SAME video that was uploaded and processed.
     """
     event = db.query(Event).filter(Event.id == event_id).first()
     if not event:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Event {event_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Event {event_id} not found."
+        )
 
     clip_file = None
+
+    # Check stored evidence path
     if event.evidence_path and os.path.exists(event.evidence_path):
         clip_file = event.evidence_path
     else:
-        # Fallback: check standard convention data/evidence/evt_001.mp4
+        # Check canonical convention: data/evidence/evt_001.mp4
         candidate = settings.EVIDENCE_DIR / f"evt_{event.id:03d}.mp4"
         if candidate.exists():
             clip_file = str(candidate)
 
     if not clip_file or not os.path.exists(clip_file):
-        # On-the-fly generation fallback if video exists
-        camera = db.query(Camera).filter(Camera.camera_id == event.camera_id).first()
-        if camera and camera.video_path and os.path.exists(camera.video_path):
-            video_rec = db.query(Video).filter(Video.camera_id == event.camera_id).order_by(Video.id.desc()).first()
-            duration = video_rec.duration if video_rec and video_rec.duration else 0.0
-            clip_file = evidence_service.generate_clip(
-                video_path=Path(camera.video_path),
-                timestamp=event.timestamp,
-                duration=duration,
-                event_id=event.id
+        # On-the-fly generation from the original video
+        video_rec = None
+        if event.video_id:
+            video_rec = db.query(Video).filter(Video.id == event.video_id).first()
+        if not video_rec:
+            video_rec = (
+                db.query(Video)
+                .filter(Video.camera_id == event.camera_id)
+                .order_by(Video.id.desc())
+                .first()
             )
-            event.evidence_path = clip_file
-            db.commit()
+
+        if video_rec and video_rec.filename:
+            vp = Path(video_rec.filename)
+            if not vp.is_absolute():
+                vp = (settings.VIDEO_DIR / vp.name).resolve()
+            if vp.exists():
+                duration = video_rec.duration or 0.0
+                clip_file = evidence_service.generate_clip(
+                    video_path=vp,
+                    timestamp=event.timestamp,
+                    duration=duration,
+                    event_id=event.id,
+                )
+                if clip_file:
+                    event.evidence_path = clip_file
+                    db.commit()
 
     if not clip_file or not os.path.exists(clip_file):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Evidence clip not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Evidence clip for event {event_id} not available."
+        )
 
     return FileResponse(clip_file, media_type="video/mp4")
 

@@ -21,13 +21,45 @@ logger = logging.getLogger("visiontrace.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: ensure tables and seed initial data
+    # ── Startup ──────────────────────────────────────────────────────────────
     logger.info("Initializing VisionTrace backend database tables...")
     Base.metadata.create_all(bind=engine)
+
+    # Automatically ensure new columns exist in existing SQLite tables
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for tbl, col, col_type in [
+            ("videos", "error_message", "TEXT"),
+            ("events", "video_id", "INTEGER"),
+            ("events", "timestamp_start", "FLOAT"),
+            ("events", "timestamp_end", "FLOAT"),
+            ("events", "color_confidence", "FLOAT"),
+        ]:
+            try:
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass
+
+    # Seed camera registry (no fake events)
     seed_database()
+
+    # Reset any videos that were stuck in 'processing' from a previous crash
+    from app.db.session import SessionLocal
+    from app.services.video_service import video_service
+    db = SessionLocal()
+    try:
+        video_service.reset_stuck_processing(db)
+    finally:
+        db.close()
+
+    # Ensure debug directory exists
+    debug_dir = settings.BASE_DIR / "data" / "debug"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+
     logger.info("Startup complete.")
     yield
-    # Shutdown
+    # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("Shutting down VisionTrace backend.")
 
 
@@ -74,6 +106,7 @@ def health_check():
             "model": settings.OLLAMA_MODEL,
         },
         "database": "sqlite",
+        "yolo_model": settings.YOLO_MODEL,
     }
 
 
@@ -83,6 +116,11 @@ if settings.VIDEO_DIR.exists():
 
 if settings.EVIDENCE_DIR.exists():
     app.mount("/data/evidence", StaticFiles(directory=str(settings.EVIDENCE_DIR)), name="evidence")
+
+# Debug frames static mount
+debug_dir = settings.BASE_DIR / "data" / "debug"
+debug_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/data/debug", StaticFiles(directory=str(debug_dir)), name="debug")
 
 
 if __name__ == "__main__":
