@@ -33,6 +33,15 @@ class Match(BaseModel):
     evidence_url: Optional[str] = None
     thumbnail_url: Optional[str] = None
     bounding_box: Optional[BoundingBox] = None
+    clothing_upper: Optional[str] = None
+    clothing_upper_color: Optional[str] = None
+    clothing_lower: Optional[str] = None
+    clothing_lower_color: Optional[str] = None
+    has_backpack: Optional[bool] = None
+    has_cap: Optional[bool] = None
+    has_hat: Optional[bool] = None
+    carried_objects: Optional[List[str]] = None
+    attribute_confidence: Optional[float] = None
 
 class TrajectoryPoint(BaseModel):
     camera_id: str
@@ -65,7 +74,7 @@ class TrajectoryResponse(BaseModel):
 class QueryResponse(BaseModel):
     query: str
     answer: str
-    status: str = "resolved"  # resolved | unsupported_object | clarification_required | all_objects
+    status: str = "resolved"  # resolved | unsupported_object | clarification_required | all_objects | gender_unsupported
     matches: List[Match] = []
     trajectory: Optional[List[TrajectoryPoint]] = None
     processing_time_ms: Optional[float] = None
@@ -76,6 +85,12 @@ class QueryIntent(BaseModel):
     object_type: Optional[str] = None
     object_types: List[str] = Field(default_factory=list)
     color: Optional[str] = None
+    clothing_upper_color: Optional[str] = None
+    clothing_lower_color: Optional[str] = None
+    has_backpack: Optional[bool] = None
+    has_cap: Optional[bool] = None
+    has_hat: Optional[bool] = None
+    carried_object: Optional[str] = None
     action: Optional[str] = None
     location: Optional[str] = None
     camera_id: Optional[str] = None
@@ -84,7 +99,7 @@ class QueryIntent(BaseModel):
     time_filter: Optional[float] = None
     attributes: List[str] = Field(default_factory=list)
     confidence: float = 0.0
-    status: str = "resolved"  # resolved | unsupported_object | clarification_required | all_objects
+    status: str = "resolved"  # resolved | unsupported_object | clarification_required | all_objects | gender_unsupported
     status_message: Optional[str] = None
     operation: str = "search"  # search | first_seen | last_seen | trajectory | evidence
 

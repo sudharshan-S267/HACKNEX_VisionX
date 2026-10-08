@@ -164,13 +164,22 @@ class QueryService:
         else:
             parsed.operation = "search"
 
-        # 2. Check for Broad "All Objects" Intent
+        # 2. Strict Gender / Sex Classification Prohibition (Section 7)
+        if re.search(r"\b(?:men|women|males?|females?)\b", q_lower):
+            parsed.status = "gender_unsupported"
+            parsed.status_message = (
+                "Gender classification is not supported. I can search observable "
+                "attributes such as clothing, bags, colors, hats, and other visible features."
+            )
+            return parsed
+
+        # 3. Check for Broad "All Objects" Intent
         if is_all_objects_query(query):
             parsed.status = "all_objects"
             parsed.object_types = sorted(list(ALL_SUPPORTED_CLASSES))
             parsed.object_type = "all objects"
         else:
-            # 3. Universal Entity Extraction & Synonym Resolution via Central Ontology
+            # 4. Universal Entity Extraction & Synonym Resolution via Central Ontology
             canonical_classes, matched_tokens = resolve_query_entities(query)
             if canonical_classes:
                 parsed.status = "resolved"
@@ -184,7 +193,7 @@ class QueryService:
                 else:
                     parsed.object_type = ", ".join(canonical_classes)
             else:
-                # 4. Check if query asks for an Unsupported Entity
+                # 5. Check if query asks for an Unsupported Entity
                 unsupp = find_unsupported_entity(query)
                 if unsupp:
                     raw_word, disp_name = unsupp
@@ -193,17 +202,73 @@ class QueryService:
                     parsed.object_types = []
                     parsed.object_type = None
                 else:
-                    # 5. Unknown / Unparseable Tokens -> Require Clarification
-                    parsed.status = "clarification_required"
-                    parsed.status_message = (
-                        "I couldn't identify a supported object in your query. "
-                        "You can search for: person, car, truck, bus, motorcycle, bicycle, "
-                        "bag (backpack/handbag/suitcase), bottle, or animal (dog/cat)."
+                    # 6. Check if query is describing person attributes (e.g., "wearing black", "with a backpack")
+                    has_attr_keywords = any(
+                        w in q_lower for w in ["wearing", "backpack", "shirt", "pants", "jeans", "cap", "hat", "carrying"]
                     )
-                    parsed.object_types = []
-                    parsed.object_type = None
+                    if has_attr_keywords:
+                        parsed.status = "resolved"
+                        parsed.object_types = ["person"]
+                        parsed.object_type = "person"
+                    else:
+                        # 7. Unknown / Unparseable Tokens -> Require Clarification
+                        parsed.status = "clarification_required"
+                        parsed.status_message = (
+                            "I couldn't identify a supported object in your query. "
+                            "You can search for: person, car, truck, bus, motorcycle, bicycle, "
+                            "bag (backpack/handbag/suitcase), bottle, or animal (dog/cat)."
+                        )
+                        parsed.object_types = []
+                        parsed.object_type = None
 
-        # 6. Color extraction
+        # 8. Visual Attribute: Upper Body Clothing & Color Extraction
+        upper_match = re.search(
+            r"\b(?:wearing|in)\s+(?:a\s+)?(red|blue|black|white|green|yellow|gray|grey|brown|orange|purple)(?:\s+(?:shirt|top|t-shirt|jacket|hoodie|clothing|clothes))?\b",
+            q_lower,
+        )
+        if not upper_match:
+            upper_match = re.search(
+                r"\b(red|blue|black|white|green|yellow|gray|grey|brown|orange|purple)\s+(?:shirt|top|t-shirt|jacket|hoodie)\b",
+                q_lower,
+            )
+        if upper_match:
+            ucol = upper_match.group(1).lower().strip()
+            parsed.clothing_upper_color = "gray" if ucol == "grey" else ucol
+            if not parsed.object_types:
+                parsed.object_types = ["person"]
+                parsed.object_type = "person"
+                parsed.status = "resolved"
+
+        # 9. Visual Attribute: Lower Body Clothing & Color Extraction
+        lower_match = re.search(
+            r"\b(red|blue|black|white|green|yellow|gray|grey|brown)\s+(?:pants|jeans|trousers|shorts)\b",
+            q_lower,
+        )
+        if lower_match:
+            lcol = lower_match.group(1).lower().strip()
+            parsed.clothing_lower_color = "gray" if lcol == "grey" else lcol
+            if not parsed.object_types:
+                parsed.object_types = ["person"]
+                parsed.object_type = "person"
+                parsed.status = "resolved"
+
+        # 10. Visual Attribute: Backpack / Bag Carrier Extraction
+        if re.search(r"\b(?:with\s+(?:a\s+)?backpack|carrying\s+(?:a\s+)?backpack|wearing\s+(?:a\s+)?backpack|backpacks?|carrying\s+bags?)\b", q_lower):
+            if "person" in q_lower or "people" in q_lower or "someone" in q_lower or "wearing" in q_lower or "with" in q_lower or not parsed.object_types:
+                parsed.has_backpack = True
+                parsed.object_types = ["person"]
+                parsed.object_type = "person"
+                parsed.status = "resolved"
+
+        # 11. Visual Attribute: Headwear (Cap / Hat) Extraction
+        if re.search(r"\b(?:wearing\s+(?:a\s+)?(?:cap|hat)|with\s+(?:a\s+)?(?:cap|hat)|caps?|hats?)\b", q_lower):
+            if "person" in q_lower or "people" in q_lower or "wearing" in q_lower or not parsed.object_types:
+                parsed.has_cap = True
+                parsed.object_types = ["person"]
+                parsed.object_type = "person"
+                parsed.status = "resolved"
+
+        # 12. Standard Color extraction (vehicles, etc.)
         for pattern in COLOR_PATTERNS:
             match = re.search(pattern, q_lower)
             if match:
@@ -256,13 +321,21 @@ class QueryService:
         3. If Ollama is unavailable or fails, use deterministic grounded answer generator.
         4. NEVER invent events, camera IDs, timestamps, or confidence values.
         """
-        # Grounding Rule: If status is unsupported_object or clarification_required, NEVER call LLM.
-        if parsed.status in ["unsupported_object", "clarification_required"]:
+        # Grounding Rule: If status is unsupported_object, clarification_required, or gender_unsupported, NEVER call LLM.
+        if parsed.status in ["unsupported_object", "clarification_required", "gender_unsupported"]:
             return parsed.status_message or "No matching event was found in the indexed footage."
 
         # Grounding Rule: If no matches, NEVER call LLM.
         if not matches:
-            if parsed.color and parsed.object_type:
+            if parsed.clothing_upper_color and (parsed.object_type == "person" or not parsed.object_type):
+                return f"No matching people wearing {parsed.clothing_upper_color} were detected in the indexed footage."
+            elif parsed.clothing_lower_color and (parsed.object_type == "person" or not parsed.object_type):
+                return f"No matching people wearing {parsed.clothing_lower_color} pants were detected in the indexed footage."
+            elif parsed.has_backpack:
+                return "No matching people with backpacks were detected in the indexed footage."
+            elif parsed.has_cap:
+                return "No matching people wearing caps were detected in the indexed footage."
+            elif parsed.color and parsed.object_type:
                 return f"No matching {parsed.color} {parsed.object_type}s were detected in the indexed footage."
             elif parsed.object_type:
                 if parsed.object_type == "all objects":
@@ -294,6 +367,13 @@ class QueryService:
         first = matches[0]
         obj_name = parsed.object_type or "object"
         color_str = f"{parsed.color} " if parsed.color else ""
+
+        if parsed.clothing_upper_color and obj_name == "person":
+            return f"Found {len(matches)} matching people wearing {parsed.clothing_upper_color} across the indexed cameras."
+        if parsed.has_backpack and obj_name == "person":
+            return f"Found {len(matches)} matching people with backpacks across the indexed cameras."
+        if parsed.has_cap and obj_name == "person":
+            return f"Found {len(matches)} matching people wearing caps across the indexed cameras."
 
         if parsed.operation == "first_seen":
             return f"The {color_str}{obj_name} was first seen at {first.camera_name} ({first.camera_id}) at timestamp {first.timestamp}s."
@@ -424,8 +504,8 @@ class QueryService:
             f"camera={parsed.camera_id}, operation={parsed.operation}"
         )
 
-        # 2. Check for Immediate Early Return (Unsupported Object or Clarification Required)
-        if parsed.status in ["unsupported_object", "clarification_required"]:
+        # 2. Check for Immediate Early Return (Unsupported Object, Clarification, or Gender Guard)
+        if parsed.status in ["unsupported_object", "clarification_required", "gender_unsupported"]:
             total_processing_ms = round((time.time() - start_time) * 1000, 2)
             logger.info(
                 f"\n[QUERY DEBUG]\n"

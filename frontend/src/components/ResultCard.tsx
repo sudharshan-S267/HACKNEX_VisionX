@@ -73,10 +73,36 @@ export default function ResultCard({
         {match.description}
       </p>
 
+      {/* Attribute badges */}
+      {(match.clothing_upper_color || match.clothing_lower_color || match.has_backpack || match.has_cap || match.has_hat) && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {match.clothing_upper_color && match.clothing_upper_color !== 'unknown' && (
+            <span className="mono text-[9px] font-semibold bg-sky-950/80 border border-sky-500/40 text-sky-300 px-1.5 py-0.5 rounded capitalize">
+              Top: {match.clothing_upper_color}
+            </span>
+          )}
+          {match.clothing_lower_color && match.clothing_lower_color !== 'unknown' && (
+            <span className="mono text-[9px] font-semibold bg-indigo-950/80 border border-indigo-500/40 text-indigo-300 px-1.5 py-0.5 rounded capitalize">
+              Bottom: {match.clothing_lower_color}
+            </span>
+          )}
+          {match.has_backpack && (
+            <span className="mono text-[9px] font-semibold bg-purple-950/80 border border-purple-500/40 text-purple-300 px-1.5 py-0.5 rounded">
+              Backpack
+            </span>
+          )}
+          {(match.has_cap || match.has_hat) && (
+            <span className="mono text-[9px] font-semibold bg-teal-950/80 border border-teal-500/40 text-teal-300 px-1.5 py-0.5 rounded">
+              Cap / Hat
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Confidence Bar */}
       <div className="mb-3 space-y-1">
         <div className="flex items-center justify-between text-[10px] font-mono">
-          <span className="text-slate-400 uppercase tracking-wider">Confidence</span>
+          <span className="text-slate-400 uppercase tracking-wider">Detection Conf</span>
           <span
             className={`font-bold ${
               isHighConf ? 'text-emerald-400' : 'text-amber-400'
@@ -93,6 +119,15 @@ export default function ResultCard({
             style={{ width: `${confidencePct}%` }}
           />
         </div>
+
+        {match.attribute_confidence != null && (
+          <div className="flex items-center justify-between text-[9px] font-mono text-slate-400 pt-0.5">
+            <span className="uppercase tracking-wider text-slate-500">Attr Conf</span>
+            <span className="text-cyan-400 font-semibold">
+              {Math.round(match.attribute_confidence * 100)}%
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Action: VIEW EVIDENCE */}

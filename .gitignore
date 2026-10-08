@@ -30,6 +30,7 @@ backend/data/evidence/*.mp4
 backend/data/evidence/*.jpg
 backend/data/evidence/*.png
 backend/data/debug/
+backend/data/attribute_debug/
 !backend/data/videos/.gitkeep
 !backend/data/evidence/.gitkeep
 *.pt

@@ -25,21 +25,9 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing VisionTrace backend database tables...")
     Base.metadata.create_all(bind=engine)
 
-    # Automatically ensure new columns exist in existing SQLite tables
-    from sqlalchemy import text
-    with engine.connect() as conn:
-        for tbl, col, col_type in [
-            ("videos", "error_message", "TEXT"),
-            ("events", "video_id", "INTEGER"),
-            ("events", "timestamp_start", "FLOAT"),
-            ("events", "timestamp_end", "FLOAT"),
-            ("events", "color_confidence", "FLOAT"),
-        ]:
-            try:
-                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}"))
-                conn.commit()
-            except Exception:
-                pass
+    # Automatically ensure new visual attribute columns exist in existing SQLite tables
+    from app.db.migrate_attributes import migrate_event_attributes
+    migrate_event_attributes()
 
     # Seed camera registry (no fake events)
     seed_database()

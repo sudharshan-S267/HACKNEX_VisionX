@@ -57,6 +57,15 @@ export interface Match {
     norm_w?: number;
     norm_h?: number;
   };
+  clothing_upper?: string;
+  clothing_upper_color?: string;
+  clothing_lower?: string;
+  clothing_lower_color?: string;
+  has_backpack?: boolean;
+  has_cap?: boolean;
+  has_hat?: boolean;
+  carried_objects?: string[];
+  attribute_confidence?: number;
 }
 
 export interface TrajectoryPoint {

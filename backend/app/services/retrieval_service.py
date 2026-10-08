@@ -139,13 +139,52 @@ class RetrievalService:
             # Enforce SQL WHERE clause: color = req_color
             query = query.filter(Event.color.ilike(req_color))
 
-        # ── 3. Database-Level Camera Constraints ─────────────────────────────
+        # ── 3. Strict Database-Level Clothing Upper Color Filter ─────────────
+        if parsed.clothing_upper_color:
+            req_up = parsed.clothing_upper_color.lower().strip()
+            query = query.filter(
+                or_(
+                    Event.clothing_upper_color.ilike(req_up),
+                    Event.description.ilike(f"%wearing {req_up}%"),
+                )
+            )
+
+        # ── 4. Strict Database-Level Clothing Lower Color Filter ─────────────
+        if parsed.clothing_lower_color:
+            req_low = parsed.clothing_lower_color.lower().strip()
+            query = query.filter(
+                or_(
+                    Event.clothing_lower_color.ilike(req_low),
+                    Event.description.ilike(f"%{req_low} pants%"),
+                    Event.description.ilike(f"%{req_low} jeans%"),
+                )
+            )
+
+        # ── 5. Strict Database-Level Backpack Filter ─────────────────────────
+        if parsed.has_backpack:
+            query = query.filter(
+                or_(
+                    Event.has_backpack == 1,
+                    Event.description.ilike("%backpack%"),
+                )
+            )
+
+        # ── 6. Strict Database-Level Cap / Hat Filter ────────────────────────
+        if parsed.has_cap:
+            query = query.filter(
+                or_(
+                    Event.has_cap == 1,
+                    Event.description.ilike("%cap%"),
+                )
+            )
+
+        # ── 7. Database-Level Camera Constraints ─────────────────────────────
         if camera_ids:
             query = query.filter(Event.camera_id.in_(camera_ids))
         if parsed.camera_id:
             query = query.filter(Event.camera_id.ilike(parsed.camera_id))
 
-        # ── 4. Database-Level Time Constraints ───────────────────────────────
+        # ── 8. Database-Level Time Constraints ───────────────────────────────
         if time_range:
             query = query.filter(
                 Event.timestamp >= time_range.start,
@@ -173,6 +212,30 @@ class RetrievalService:
             # Strict color double-check (fail-safe)
             if parsed.color:
                 if ev_color != parsed.color.lower().strip():
+                    continue
+
+            # Strict upper clothing color double-check
+            if parsed.clothing_upper_color:
+                ev_up = (event.clothing_upper_color or "").lower().strip()
+                if ev_up != parsed.clothing_upper_color.lower().strip() and f"wearing {parsed.clothing_upper_color}" not in ev_desc:
+                    continue
+
+            # Strict lower clothing color double-check
+            if parsed.clothing_lower_color:
+                ev_low = (event.clothing_lower_color or "").lower().strip()
+                if ev_low != parsed.clothing_lower_color.lower().strip() and f"{parsed.clothing_lower_color} pants" not in ev_desc and f"{parsed.clothing_lower_color} jeans" not in ev_desc:
+                    continue
+
+            # Strict backpack double-check
+            if parsed.has_backpack:
+                has_bp = (event.has_backpack == 1) or ("backpack" in ev_desc)
+                if not has_bp:
+                    continue
+
+            # Strict cap double-check
+            if parsed.has_cap:
+                has_cp = (event.has_cap == 1) or ("cap" in ev_desc)
+                if not has_cp:
                     continue
 
             score = 100.0  # Base score for passing database-level filter
@@ -280,6 +343,13 @@ class RetrievalService:
             evidence_url = f"/api/v1/evidence/{ev.id}"
             thumbnail_url = f"/api/v1/evidence/{ev.id}/frame"
 
+            carried = []
+            if ev.carried_objects:
+                try:
+                    carried = json.loads(ev.carried_objects)
+                except Exception:
+                    pass
+
             matches.append(
                 Match(
                     id=ev.id,
@@ -294,6 +364,15 @@ class RetrievalService:
                     evidence_url=evidence_url,
                     thumbnail_url=thumbnail_url,
                     bounding_box=bbox,
+                    clothing_upper=ev.clothing_upper,
+                    clothing_upper_color=ev.clothing_upper_color,
+                    clothing_lower=ev.clothing_lower,
+                    clothing_lower_color=ev.clothing_lower_color,
+                    has_backpack=bool(ev.has_backpack),
+                    has_cap=bool(ev.has_cap),
+                    has_hat=bool(ev.has_hat),
+                    carried_objects=carried,
+                    attribute_confidence=ev.attribute_confidence,
                 )
             )
 

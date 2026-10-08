@@ -60,6 +60,22 @@ class Event(Base):
     thumbnail_url = Column(String, nullable=True)
     bounding_box = Column(Text, nullable=True)
 
+    # ── Visual Intelligence & Attribute Enrichment Fields ───────────────────
+    clothing_upper = Column(String, nullable=True)
+    clothing_upper_color = Column(String, index=True, nullable=True)
+    clothing_lower = Column(String, nullable=True)
+    clothing_lower_color = Column(String, index=True, nullable=True)
+    has_backpack = Column(Integer, default=0, index=True)
+    has_handbag = Column(Integer, default=0)
+    has_suitcase = Column(Integer, default=0)
+    has_hat = Column(Integer, default=0)
+    has_cap = Column(Integer, default=0, index=True)
+    has_helmet = Column(Integer, default=0)
+    has_umbrella = Column(Integer, default=0)
+    carried_objects = Column(Text, nullable=True)
+    attribute_confidence = Column(Float, nullable=True)
+    attributes_json = Column(Text, nullable=True)
+
     # Alias property for evidence_path compatibility with backend2
     @property
     def evidence_path(self) -> str:

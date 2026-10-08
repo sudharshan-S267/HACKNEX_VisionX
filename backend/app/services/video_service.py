@@ -15,6 +15,7 @@ from app.models.video import Video
 from app.models.event import Event
 from app.services.detection_service import detection_service
 from app.services.evidence_service import evidence_service
+from app.services.attribute_service import attribute_service
 from app.utils.video import get_video_metadata
 
 logger = logging.getLogger(__name__)
@@ -176,8 +177,9 @@ class VideoService:
             debug_dir.mkdir(parents=True, exist_ok=True)
 
             # ── Frame streaming loop ─────────────────────────────────────────
-            # track_id -> { object_type, timestamps, confidences, bboxes, colors, frames }
+            # track_id -> { object_type, timestamps, confidences, bboxes, colors, frames, crops }
             tracks: Dict[int, Dict[str, Any]] = {}
+            co_located_by_frame: Dict[int, List[Dict[str, Any]]] = {}
             untracked_counter = 100000  # High range so they don't collide with real track IDs
 
             frame_idx = 0
@@ -209,6 +211,7 @@ class VideoService:
                     if detections:
                         frames_with_detections += 1
                         raw_detection_count += len(detections)
+                        co_located_by_frame[frame_idx] = detections
                         logger.info(
                             f"Frame {frame_idx}/{total_frames} ({timestamp}s) "
                             f"— {len(detections)} detection(s)"
@@ -264,6 +267,7 @@ class VideoService:
                                 "bboxes": [],
                                 "colors": [],
                                 "frame_numbers": [],
+                                "crops": [],
                             }
 
                         tracks[t_id]["timestamps"].append(timestamp)
@@ -273,6 +277,19 @@ class VideoService:
                             (det.get("color"), det.get("color_confidence", 0.0))
                         )
                         tracks[t_id]["frame_numbers"].append(frame_idx)
+
+                        # Capture candidate person crops for second-stage attribute enrichment
+                        if det["object_type"] == "person" and len(tracks[t_id]["crops"]) < 6:
+                            x1, y1, x2, y2 = det["bbox"]
+                            if x2 > x1 and y2 > y1:
+                                crop_img = frame[y1:y2, x1:x2].copy()
+                                tracks[t_id]["crops"].append({
+                                    "crop": crop_img,
+                                    "confidence": det["confidence"],
+                                    "bbox": det["bbox"],
+                                    "frame_idx": frame_idx,
+                                    "timestamp": timestamp,
+                                })
 
                 frame_idx += 1
 
@@ -333,11 +350,36 @@ class VideoService:
                         round(float(np.mean(winning_confs)), 2) if winning_confs else 0.5
                     )
 
-                desc = (
-                    f"{final_color} {obj_type} detected"
-                    if final_color
-                    else f"{obj_type} detected"
-                )
+                # ── Second-Stage Visual Intelligence & Attribute Enrichment Layer ───
+                enriched = {}
+                if obj_type == "person":
+                    rep_frames = attribute_service.select_representative_frames(
+                        t_data.get("crops", []), max_reps=3
+                    )
+                    enriched = attribute_service.enrich_track(
+                        video_id=video.id,
+                        track_id=t_id,
+                        object_type=obj_type,
+                        representative_frames=rep_frames,
+                        co_located_detections_by_frame=co_located_by_frame,
+                    )
+
+                if obj_type == "person" and enriched:
+                    desc_parts = []
+                    if enriched.get("clothing_upper_color"):
+                        desc_parts.append(f"wearing {enriched.get('clothing_upper')}")
+                    if enriched.get("clothing_lower_color"):
+                        desc_parts.append(f"wearing {enriched.get('clothing_lower')}")
+                    if enriched.get("has_backpack"):
+                        desc_parts.append("with a backpack")
+                    if enriched.get("has_cap"):
+                        desc_parts.append("wearing a cap")
+                    desc = f"person detected ({', '.join(desc_parts)})" if desc_parts else "person detected"
+                elif final_color:
+                    desc = f"{final_color} {obj_type} detected"
+                else:
+                    desc = f"{obj_type} detected"
+
                 evt_code = f"evt_{video.camera_id}_{t_id:04d}"
 
                 event = Event(
@@ -357,6 +399,18 @@ class VideoService:
                     bbox=peak_bbox,
                     description=desc,
                     evidence_path=None,
+                    clothing_upper=enriched.get("clothing_upper"),
+                    clothing_upper_color=enriched.get("clothing_upper_color"),
+                    clothing_lower=enriched.get("clothing_lower"),
+                    clothing_lower_color=enriched.get("clothing_lower_color"),
+                    has_backpack=1 if enriched.get("has_backpack") else 0,
+                    has_handbag=1 if enriched.get("has_handbag") else 0,
+                    has_suitcase=1 if enriched.get("has_suitcase") else 0,
+                    has_cap=1 if enriched.get("has_cap") else 0,
+                    has_hat=1 if enriched.get("has_hat") else 0,
+                    carried_objects=json.dumps(enriched.get("carried_objects", [])),
+                    attribute_confidence=enriched.get("attribute_confidence"),
+                    attributes_json=json.dumps(enriched) if enriched else None,
                 )
                 db.add(event)
                 db.flush()

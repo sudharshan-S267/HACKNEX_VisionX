@@ -6,8 +6,10 @@ from app.utils.video import classify_dominant_color
 
 logger = logging.getLogger(__name__)
 
-# Minimum target classes required
-TARGET_CLASSES = {"person", "car", "truck", "bus", "motorcycle", "bicycle"}
+from app.core.ontology import ALL_SUPPORTED_CLASSES
+
+# Target classes directly supported by detection and ontology
+TARGET_CLASSES = set(ALL_SUPPORTED_CLASSES)
 
 
 class DetectionService:
